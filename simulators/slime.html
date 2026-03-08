@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Slime Mold</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e;
+      --accent: #00e676; --text: #e2e2f0; --muted: #6b6b8a;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif;
+      display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    header { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1rem;
+      background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+    .back { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+    .back:hover { color: var(--text); }
+    h1 { font-size: 1.1rem; font-weight: 700; }
+    .controls { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; flex: 1; }
+    button { background: var(--border); border: 1px solid #2a2a3e; color: var(--text);
+      padding: 0.35rem 0.85rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+    button:hover { background: var(--accent); border-color: var(--accent); color: #000; }
+    label { font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
+    input[type=range] { width: 70px; accent-color: var(--accent); }
+    select { background: var(--border); border: 1px solid #2a2a3e; color: var(--text);
+      padding: 0.35rem 0.5rem; border-radius: 6px; font-size: 0.8rem; }
+    canvas { display: block; }
+    .canvas-wrap { flex: 1; overflow: hidden; }
+    footer { padding: 0.4rem 1rem; background: var(--surface); border-top: 1px solid var(--border);
+      font-size: 0.75rem; color: var(--muted); flex-shrink: 0; }
+  </style>
+</head>
+<body>
+<header>
+  <a class="back" href="../index.html">← Back</a>
+  <h1>Slime Mold · Physarum</h1>
+  <div class="controls">
+    <button id="btn-reset">Reset</button>
+    <select id="spawn">
+      <option value="circle">Circle spawn</option>
+      <option value="random">Random spawn</option>
+      <option value="center">Center point</option>
+      <option value="ring">Ring</option>
+    </select>
+    <select id="colormap">
+      <option value="green">Green</option>
+      <option value="yellow">Amber</option>
+      <option value="cyan">Cyan</option>
+      <option value="rainbow">Rainbow</option>
+    </select>
+    <label>Agents <input type="range" id="agent-count" min="500" max="8000" step="100" value="3000"><span id="lbl-agents">3000</span></label>
+    <label>Sensor dist <input type="range" id="so" min="5" max="50" value="20"><span id="lbl-so">20</span></label>
+    <label>Sensor angle <input type="range" id="sa" min="5" max="90" value="35"><span id="lbl-sa">35</span></label>
+    <label>Rot speed <input type="range" id="ra" min="5" max="80" value="30"><span id="lbl-ra">30</span></label>
+    <label>Speed <input type="range" id="ss" min="0.5" max="3" step="0.1" value="1.3"><span id="lbl-ss">1.3</span></label>
+    <label>Decay <input type="range" id="decay" min="0.90" max="0.999" step="0.001" value="0.97"><span id="lbl-decay">0.97</span></label>
+  </div>
+</header>
+<div class="canvas-wrap" id="wrap">
+  <canvas id="canvas"></canvas>
+</div>
+<footer>Physarum-inspired: agents sense chemical gradients and steer toward stronger signals, building networks.</footer>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('wrap');
+
+let W, H;
+let trail;
+let agents = [];
+let imageData;
+
+let params = {
+  agentCount: 3000, SO: 20, SA: 35, RA: 30, SS: 1.3, decay: 0.97
+};
+
+const COLORS = {
+  green:   (v) => [Math.floor(v * 20),  Math.floor(v * 220), Math.floor(v * 60)],
+  yellow:  (v) => [Math.floor(v * 255), Math.floor(v * 180), Math.floor(v * 10)],
+  cyan:    (v) => [Math.floor(v * 10),  Math.floor(v * 200), Math.floor(v * 240)],
+  rainbow: (v) => {
+    const h = v * 300;
+    const r = Math.max(0, Math.min(1, Math.abs((h/60)%6-3)-1));
+    const g = Math.max(0, Math.min(1, 2-Math.abs((h/60)%6-2)));
+    const b = Math.max(0, Math.min(1, 2-Math.abs((h/60)%6-4)));
+    return [Math.floor(r*255*v), Math.floor(g*255*v), Math.floor(b*255*v)];
+  }
+};
+
+function resize() {
+  W = wrap.clientWidth; H = wrap.clientHeight;
+  canvas.width = W; canvas.height = H;
+  trail = new Float32Array(W * H);
+  imageData = ctx.createImageData(W, H);
+  init();
+}
+
+function spawnAgents() {
+  const mode = document.getElementById('spawn').value;
+  agents = [];
+  for (let i = 0; i < params.agentCount; i++) {
+    let x, y, angle;
+    if (mode === 'circle') {
+      const r = Math.min(W, H) * 0.3;
+      const a = (i / params.agentCount) * Math.PI * 2;
+      x = W/2 + Math.cos(a) * r; y = H/2 + Math.sin(a) * r;
+      angle = a + Math.PI; // face inward
+    } else if (mode === 'ring') {
+      const r = Math.min(W, H) * 0.35;
+      const a = (i / params.agentCount) * Math.PI * 2;
+      x = W/2 + Math.cos(a) * r + (Math.random()-0.5)*20;
+      y = H/2 + Math.sin(a) * r + (Math.random()-0.5)*20;
+      angle = Math.random() * Math.PI * 2;
+    } else if (mode === 'center') {
+      x = W/2 + (Math.random()-0.5)*10; y = H/2 + (Math.random()-0.5)*10;
+      angle = Math.random() * Math.PI * 2;
+    } else {
+      x = Math.random() * W; y = Math.random() * H;
+      angle = Math.random() * Math.PI * 2;
+    }
+    agents.push({ x, y, angle });
+  }
+}
+
+function init() {
+  trail.fill(0);
+  spawnAgents();
+}
+
+function sense(x, y, angle) {
+  const SO = params.SO;
+  const sx = Math.round(x + Math.cos(angle) * SO);
+  const sy = Math.round(y + Math.sin(angle) * SO);
+  if (sx < 0 || sx >= W || sy < 0 || sy >= H) return 0;
+  return trail[sy * W + sx];
+}
+
+function step() {
+  const SA = params.SA * Math.PI / 180;
+  const RA = params.RA * Math.PI / 180;
+  const SS = params.SS;
+
+  for (const a of agents) {
+    const fwd = sense(a.x, a.y, a.angle);
+    const lft = sense(a.x, a.y, a.angle - SA);
+    const rgt = sense(a.x, a.y, a.angle + SA);
+
+    if (fwd > lft && fwd > rgt) {
+      // continue forward
+    } else if (fwd < lft && fwd < rgt) {
+      a.angle += (Math.random() < 0.5 ? 1 : -1) * RA;
+    } else if (lft > rgt) {
+      a.angle -= RA;
+    } else if (rgt > lft) {
+      a.angle += RA;
+    }
+
+    a.angle += (Math.random() - 0.5) * 0.1;
+
+    let nx = a.x + Math.cos(a.angle) * SS;
+    let ny = a.y + Math.sin(a.angle) * SS;
+
+    if (nx < 0 || nx >= W) { a.angle = Math.PI - a.angle; nx = Math.max(0, Math.min(W-1, nx)); }
+    if (ny < 0 || ny >= H) { a.angle = -a.angle; ny = Math.max(0, Math.min(H-1, ny)); }
+    a.x = nx; a.y = ny;
+
+    const xi = Math.round(a.x), yi = Math.round(a.y);
+    if (xi >= 0 && xi < W && yi >= 0 && yi < H) {
+      trail[yi * W + xi] = Math.min(1, trail[yi * W + xi] + 0.3);
+    }
+  }
+
+  // Diffuse + decay
+  const tmp = new Float32Array(W * H);
+  const decay = params.decay;
+  for (let r = 1; r < H-1; r++) {
+    for (let c = 1; c < W-1; c++) {
+      const i = r * W + c;
+      const avg = (trail[(r-1)*W+c] + trail[(r+1)*W+c] + trail[r*W+c-1] + trail[r*W+c+1] + trail[i]*2) / 6;
+      tmp[i] = avg * decay;
+    }
+  }
+  trail.set(tmp);
+}
+
+function draw() {
+  const colorFn = COLORS[document.getElementById('colormap').value] || COLORS.green;
+  const data = imageData.data;
+  for (let i = 0; i < trail.length; i++) {
+    const v = trail[i];
+    const [r, g, b] = colorFn(v);
+    data[i*4] = r; data[i*4+1] = g; data[i*4+2] = b; data[i*4+3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function loop() {
+  requestAnimationFrame(loop);
+  for (let i = 0; i < 2; i++) step();
+  draw();
+}
+
+// Controls
+document.getElementById('btn-reset').addEventListener('click', init);
+document.getElementById('spawn').addEventListener('change', init);
+
+function bind(id, key, lbl, factor) {
+  document.getElementById(id).addEventListener('input', e => {
+    params[key] = +e.target.value * (factor || 1);
+    document.getElementById(lbl).textContent = e.target.value;
+  });
+}
+bind('so','SO','lbl-so');
+bind('sa','SA','lbl-sa');
+bind('ra','RA','lbl-ra');
+bind('ss','SS','lbl-ss');
+bind('decay','decay','lbl-decay');
+
+document.getElementById('agent-count').addEventListener('input', e => {
+  params.agentCount = +e.target.value;
+  document.getElementById('lbl-agents').textContent = e.target.value;
+  spawnAgents();
+});
+
+// Click to add disturbance
+canvas.addEventListener('click', e => {
+  const r = canvas.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  // Spawn a bunch of new agents at click
+  for (let i = 0; i < 200; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = Math.random() * 20;
+    agents.push({
+      x: x + Math.cos(angle) * dist,
+      y: y + Math.sin(angle) * dist,
+      angle: Math.random() * Math.PI * 2
+    });
+  }
+  // Also boost trail at that point
+  for (let dy = -10; dy <= 10; dy++) {
+    for (let dx = -10; dx <= 10; dx++) {
+      const xi = Math.round(x + dx), yi = Math.round(y + dy);
+      if (xi >= 0 && xi < W && yi >= 0 && yi < H)
+        trail[yi * W + xi] = Math.min(1, trail[yi * W + xi] + 0.5);
+    }
+  }
+});
+
+window.addEventListener('resize', resize);
+resize();
+loop();
+</script>
+</body>
+</html>

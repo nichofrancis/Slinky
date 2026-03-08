@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Emergent Simulators</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0f;
+      --surface: #12121a;
+      --border: #1e1e2e;
+      --accent: #7c6af7;
+      --accent2: #4fc3f7;
+      --text: #e2e2f0;
+      --muted: #6b6b8a;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      padding: 2rem 1rem 4rem;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 3rem;
+    }
+
+    header h1 {
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 0.75rem;
+    }
+
+    header p {
+      color: var(--muted);
+      font-size: 1.1rem;
+      max-width: 500px;
+      margin: 0 auto;
+      line-height: 1.6;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1.25rem;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      text-decoration: none;
+      color: inherit;
+      display: flex;
+      flex-direction: column;
+      transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+      cursor: pointer;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      border-color: var(--accent);
+      box-shadow: 0 12px 40px rgba(124, 106, 247, 0.18);
+    }
+
+    .card-preview {
+      width: 100%;
+      height: 160px;
+      display: block;
+      background: #0d0d16;
+    }
+
+    .card-body {
+      padding: 1.25rem 1.25rem 1.5rem;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+
+    .card-tag {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .card-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .card-desc {
+      font-size: 0.875rem;
+      color: var(--muted);
+      line-height: 1.55;
+      margin-top: 0.15rem;
+    }
+
+    footer {
+      text-align: center;
+      margin-top: 4rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Emergent Simulators</h1>
+    <p>Complex behaviour arising from simple rules. Click any simulator to explore.</p>
+  </header>
+
+  <div class="grid">
+
+    <a class="card" href="simulators/life.html">
+      <canvas class="card-preview" id="prev-life"></canvas>
+      <div class="card-body">
+        <span class="card-tag">Cellular Automata</span>
+        <div class="card-title">Conway's Game of Life</div>
+        <div class="card-desc">Cells live, die, and reproduce based on their neighbours. One of the most famous examples of emergence.</div>
+      </div>
+    </a>
+
+    <a class="card" href="simulators/boids.html">
+      <canvas class="card-preview" id="prev-boids"></canvas>
+      <div class="card-body">
+        <span class="card-tag">Swarm Intelligence</span>
+        <div class="card-title">Boids Flocking</div>
+        <div class="card-desc">Hundreds of agents follow three simple rules — separation, alignment, cohesion — and produce lifelike flocking.</div>
+      </div>
+    </a>
+
+    <a class="card" href="simulators/ants.html">
+      <canvas class="card-preview" id="prev-ants"></canvas>
+      <div class="card-body">
+        <span class="card-tag">Stigmergy</span>
+        <div class="card-title">Ant Colony</div>
+        <div class="card-desc">Ants deposit pheromone trails to communicate. Watch shortest paths emerge with no central planning.</div>
+      </div>
+    </a>
+
+    <a class="card" href="simulators/reaction-diffusion.html">
+      <canvas class="card-preview" id="prev-rd"></canvas>
+      <div class="card-body">
+        <span class="card-tag">Chemistry</span>
+        <div class="card-title">Reaction-Diffusion</div>
+        <div class="card-desc">The Gray-Scott model produces leopard spots, coral patterns, and labyrinths from two simple chemical reactions.</div>
+      </div>
+    </a>
+
+    <a class="card" href="simulators/slime.html">
+      <canvas class="card-preview" id="prev-slime"></canvas>
+      <div class="card-body">
+        <span class="card-tag">Biological</span>
+        <div class="card-title">Slime Mold</div>
+        <div class="card-desc">Physarum-inspired agents sense chemical gradients and build efficient transport networks.</div>
+      </div>
+    </a>
+
+    <a class="card" href="simulators/fire.html">
+      <canvas class="card-preview" id="prev-fire"></canvas>
+      <div class="card-body">
+        <span class="card-tag">Spreading Dynamics</span>
+        <div class="card-title">Forest Fire</div>
+        <div class="card-desc">Trees randomly ignite and spread flames to neighbours. Percolation thresholds and firebreaks emerge naturally.</div>
+      </div>
+    </a>
+
+    <a class="card" href="simulators/sand.html">
+      <canvas class="card-preview" id="prev-sand"></canvas>
+      <div class="card-body">
+        <span class="card-tag">Particle Physics</span>
+        <div class="card-title">Falling Sand</div>
+        <div class="card-desc">Sand, water, and fire particles interact through simple local rules, producing avalanches and fluid dynamics.</div>
+      </div>
+    </a>
+
+    <a class="card" href="simulators/segregation.html">
+      <canvas class="card-preview" id="prev-seg"></canvas>
+      <div class="card-body">
+        <span class="card-tag">Social Dynamics</span>
+        <div class="card-title">Schelling Segregation</div>
+        <div class="card-desc">Agents with mild preferences for similar neighbours produce stark large-scale segregation — a social emergence model.</div>
+      </div>
+    </a>
+
+  </div>
+
+  <footer>
+    Each simulation runs entirely in your browser — no server required.
+  </footer>
+
+  <script>
+    // Mini animated previews on the landing page
+    const TAU = Math.PI * 2;
+
+    // ── Game of Life preview ──────────────────────────────────────────────────
+    (function() {
+      const canvas = document.getElementById('prev-life');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.offsetWidth, H = canvas.offsetHeight;
+      canvas.width = W; canvas.height = H;
+      const CELL = 8, COLS = Math.floor(W/CELL), ROWS = Math.floor(H/CELL);
+      let grid = Array.from({length: ROWS}, () =>
+        Array.from({length: COLS}, () => Math.random() < 0.35 ? 1 : 0));
+      function step() {
+        const next = grid.map((row, r) => row.map((cell, c) => {
+          let n = 0;
+          for (let dr=-1;dr<=1;dr++) for (let dc=-1;dc<=1;dc++) {
+            if (dr===0&&dc===0) continue;
+            const nr=(r+dr+ROWS)%ROWS, nc=(c+dc+COLS)%COLS;
+            n += grid[nr][nc];
+          }
+          return (cell && (n===2||n===3)) || (!cell && n===3) ? 1 : 0;
+        }));
+        grid = next;
+      }
+      function draw() {
+        ctx.fillStyle = '#0d0d16';
+        ctx.fillRect(0,0,W,H);
+        ctx.fillStyle = '#7c6af7';
+        for (let r=0;r<ROWS;r++) for (let c=0;c<COLS;c++)
+          if (grid[r][c]) ctx.fillRect(c*CELL+1, r*CELL+1, CELL-1, CELL-1);
+      }
+      function loop() { step(); draw(); setTimeout(loop, 100); }
+      loop();
+    })();
+
+    // ── Boids preview ─────────────────────────────────────────────────────────
+    (function() {
+      const canvas = document.getElementById('prev-boids');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.offsetWidth, H = canvas.offsetHeight;
+      canvas.width = W; canvas.height = H;
+      const N = 60;
+      const boids = Array.from({length:N}, () => ({
+        x: Math.random()*W, y: Math.random()*H,
+        vx: (Math.random()-0.5)*3, vy: (Math.random()-0.5)*3
+      }));
+      function loop() {
+        ctx.fillStyle = '#0d0d16';
+        ctx.fillRect(0,0,W,H);
+        for (const b of boids) {
+          let ax=0,ay=0,cx=0,cy=0,sx=0,sy=0,count=0;
+          for (const o of boids) {
+            if (o===b) continue;
+            const dx=o.x-b.x, dy=o.y-b.y, d=Math.sqrt(dx*dx+dy*dy);
+            if (d<60) { ax+=o.vx; ay+=o.vy; cx+=o.x; cy+=o.y; count++; }
+            if (d<20) { sx-=dx/(d+0.01); sy-=dy/(d+0.01); }
+          }
+          if (count) { ax/=count; ay/=count; cx/=count; cy/=count;
+            b.vx += (ax-b.vx)*0.05 + (cx-b.x)*0.002 + sx*0.05;
+            b.vy += (ay-b.vy)*0.05 + (cy-b.y)*0.002 + sy*0.05;
+          }
+          const spd = Math.sqrt(b.vx*b.vx+b.vy*b.vy);
+          if (spd>3) { b.vx=b.vx/spd*3; b.vy=b.vy/spd*3; }
+          if (spd<1 && spd>0) { b.vx=b.vx/spd; b.vy=b.vy/spd; }
+          b.x = (b.x+b.vx+W)%W; b.y = (b.y+b.vy+H)%H;
+          const angle = Math.atan2(b.vy, b.vx);
+          ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(angle);
+          ctx.beginPath(); ctx.moveTo(6,0); ctx.lineTo(-4,3); ctx.lineTo(-4,-3); ctx.closePath();
+          ctx.fillStyle = '#4fc3f7'; ctx.fill(); ctx.restore();
+        }
+        requestAnimationFrame(loop);
+      }
+      loop();
+    })();
+
+    // ── Ant Colony preview ────────────────────────────────────────────────────
+    (function() {
+      const canvas = document.getElementById('prev-ants');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.offsetWidth, H = canvas.offsetHeight;
+      canvas.width = W; canvas.height = H;
+      const CELL = 4, COLS = Math.floor(W/CELL), ROWS = Math.floor(H/CELL);
+      const trail = new Float32Array(COLS * ROWS);
+      const N = 80;
+      const ants = Array.from({length:N}, () => ({
+        x: COLS/2+Math.random()*4-2, y: ROWS/2+Math.random()*4-2,
+        angle: Math.random()*TAU, hasFood: false
+      }));
+      const food = {x: Math.floor(COLS*0.75), y: Math.floor(ROWS*0.3)};
+      function loop() {
+        for (let i=0;i<trail.length;i++) trail[i]*=0.995;
+        for (const ant of ants) {
+          ant.angle += (Math.random()-0.5)*0.8;
+          const nx = ant.x + Math.cos(ant.angle)*0.6;
+          const ny = ant.y + Math.sin(ant.angle)*0.6;
+          ant.x = (nx+COLS)%COLS; ant.y = (ny+ROWS)%ROWS;
+          const ci = Math.floor(ant.x), ri = Math.floor(ant.y);
+          if (ci>=0&&ci<COLS&&ri>=0&&ri<ROWS) {
+            trail[ri*COLS+ci] = Math.min(1, trail[ri*COLS+ci]+0.4);
+            const dx=ci-food.x, dy=ri-food.y;
+            if (Math.sqrt(dx*dx+dy*dy)<3) ant.angle += Math.PI;
+          }
+        }
+        ctx.fillStyle = '#0d0d16';
+        ctx.fillRect(0,0,W,H);
+        const img = ctx.createImageData(W,H);
+        for (let r=0;r<ROWS;r++) for (let c=0;c<COLS;c++) {
+          const v = trail[r*COLS+c];
+          if (v>0.01) {
+            for (let dy=0;dy<CELL;dy++) for (let dx=0;dx<CELL;dx++) {
+              const idx=((r*CELL+dy)*W+(c*CELL+dx))*4;
+              img.data[idx]=Math.floor(80*v+80); img.data[idx+1]=Math.floor(200*v);
+              img.data[idx+2]=Math.floor(100*v); img.data[idx+3]=255;
+            }
+          }
+        }
+        ctx.putImageData(img,0,0);
+        ctx.fillStyle='#ffd700';
+        ctx.fillRect(food.x*CELL-3, food.y*CELL-3, 8, 8);
+        ctx.fillStyle='rgba(255,150,50,0.9)';
+        for (const ant of ants) ctx.fillRect(ant.x*CELL-1,ant.y*CELL-1,2,2);
+        setTimeout(loop, 30);
+      }
+      loop();
+    })();
+
+    // ── Reaction-Diffusion preview ────────────────────────────────────────────
+    (function() {
+      const canvas = document.getElementById('prev-rd');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.offsetWidth, H = canvas.offsetHeight;
+      canvas.width = W; canvas.height = H;
+      const S = 80;
+      let A = new Float32Array(S*S).fill(1);
+      let B = new Float32Array(S*S).fill(0);
+      const nA = new Float32Array(S*S), nB = new Float32Array(S*S);
+      // Seed
+      for (let i=35;i<45;i++) for (let j=35;j<45;j++) { A[i*S+j]=0.5; B[i*S+j]=0.25; }
+      const DA=1.0, DB=0.5, f=0.055, k=0.062;
+      function step() {
+        for (let r=1;r<S-1;r++) for (let c=1;c<S-1;c++) {
+          const i=r*S+c;
+          const lapA=A[(r-1)*S+c]+A[(r+1)*S+c]+A[r*S+c-1]+A[r*S+c+1]-4*A[i];
+          const lapB=B[(r-1)*S+c]+B[(r+1)*S+c]+B[r*S+c-1]+B[r*S+c+1]-4*B[i];
+          const react=A[i]*B[i]*B[i];
+          nA[i]=Math.max(0,Math.min(1, A[i]+DA*lapA*0.2-react+f*(1-A[i])));
+          nB[i]=Math.max(0,Math.min(1, B[i]+DB*lapB*0.2+react-(k+f)*B[i]));
+        }
+        A.set(nA); B.set(nB);
+      }
+      function draw() {
+        const img = ctx.createImageData(W,H);
+        const scaleX=W/S, scaleY=H/S;
+        for (let r=0;r<S;r++) for (let c=0;c<S;c++) {
+          const v=A[r*S+c]-B[r*S+c];
+          const col=Math.floor(Math.max(0,Math.min(1,v))*255);
+          const px=Math.floor(c*scaleX), py=Math.floor(r*scaleY);
+          const pw=Math.ceil(scaleX), ph=Math.ceil(scaleY);
+          for (let dy=0;dy<ph;dy++) for (let dx=0;dx<pw;dx++) {
+            const idx=((py+dy)*W+(px+dx))*4;
+            if (idx+3<img.data.length) {
+              img.data[idx]=col; img.data[idx+1]=Math.floor(col*0.3+80*(1-col/255));
+              img.data[idx+2]=255-col; img.data[idx+3]=255;
+            }
+          }
+        }
+        ctx.putImageData(img,0,0);
+      }
+      function loop() { for(let i=0;i<4;i++) step(); draw(); setTimeout(loop, 50); }
+      loop();
+    })();
+
+    // ── Slime Mold preview ────────────────────────────────────────────────────
+    (function() {
+      const canvas = document.getElementById('prev-slime');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.offsetWidth, H = canvas.offsetHeight;
+      canvas.width = W; canvas.height = H;
+      const N = 300;
+      const trail = new Float32Array(W*H);
+      const agents = Array.from({length:N}, () => ({
+        x: W/2+(Math.random()-0.5)*30, y: H/2+(Math.random()-0.5)*30,
+        angle: Math.random()*TAU
+      }));
+      const SA=Math.PI/4, SO=30, SS=1.5, RA=Math.PI/4;
+      function sense(x,y,ang) {
+        const sx=Math.round(x+Math.cos(ang)*SO), sy=Math.round(y+Math.sin(ang)*SO);
+        if (sx<0||sx>=W||sy<0||sy>=H) return 0;
+        return trail[sy*W+sx];
+      }
+      function loop() {
+        for (const a of agents) {
+          const fwd=sense(a.x,a.y,a.angle);
+          const lft=sense(a.x,a.y,a.angle-SA);
+          const rgt=sense(a.x,a.y,a.angle+SA);
+          if (fwd>lft&&fwd>rgt) {}
+          else if (fwd<lft&&fwd<rgt) a.angle+=(Math.random()<0.5?1:-1)*RA;
+          else if (lft>rgt) a.angle-=RA;
+          else if (rgt>lft) a.angle+=RA;
+          a.angle += (Math.random()-0.5)*0.2;
+          a.x += Math.cos(a.angle)*SS; a.y += Math.sin(a.angle)*SS;
+          if (a.x<0||a.x>=W) { a.angle=Math.PI-a.angle; a.x=Math.max(0,Math.min(W-1,a.x)); }
+          if (a.y<0||a.y>=H) { a.angle=-a.angle; a.y=Math.max(0,Math.min(H-1,a.y)); }
+          const xi=Math.round(a.x), yi=Math.round(a.y);
+          if (xi>=0&&xi<W&&yi>=0&&yi<H) trail[yi*W+xi]=Math.min(1,trail[yi*W+xi]+0.8);
+        }
+        // Diffuse & decay
+        const tmp=new Float32Array(W*H);
+        for (let r=1;r<H-1;r++) for (let c=1;c<W-1;c++) {
+          tmp[r*W+c]=(trail[(r-1)*W+c]+trail[(r+1)*W+c]+trail[r*W+c-1]+trail[r*W+c+1]+trail[r*W+c]*2)/6*0.97;
+        }
+        trail.set(tmp);
+        const img=ctx.createImageData(W,H);
+        for (let i=0;i<trail.length;i++) {
+          const v=trail[i];
+          img.data[i*4]=Math.floor(v*30); img.data[i*4+1]=Math.floor(v*220);
+          img.data[i*4+2]=Math.floor(v*80); img.data[i*4+3]=255;
+        }
+        ctx.putImageData(img,0,0);
+        requestAnimationFrame(loop);
+      }
+      loop();
+    })();
+
+    // ── Forest Fire preview ───────────────────────────────────────────────────
+    (function() {
+      const canvas = document.getElementById('prev-fire');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.offsetWidth, H = canvas.offsetHeight;
+      canvas.width = W; canvas.height = H;
+      const CELL=6, COLS=Math.floor(W/CELL), ROWS=Math.floor(H/CELL);
+      const EMPTY=0,TREE=1,FIRE=2,ASH=3;
+      let grid=Array.from({length:ROWS},()=>Array.from({length:COLS},()=>Math.random()<0.65?TREE:EMPTY));
+      let age=Array.from({length:ROWS},()=>new Array(COLS).fill(0));
+      function step() {
+        const next=grid.map(r=>[...r]);
+        for (let r=0;r<ROWS;r++) for (let c=0;c<COLS;c++) {
+          if (grid[r][c]===TREE) {
+            let onFire=false;
+            for (let dr=-1;dr<=1;dr++) for (let dc=-1;dc<=1;dc++) {
+              if (dr===0&&dc===0) continue;
+              const nr=r+dr,nc=c+dc;
+              if (nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&grid[nr][nc]===FIRE) onFire=true;
+            }
+            if (onFire||Math.random()<0.00015) next[r][c]=FIRE;
+          } else if (grid[r][c]===FIRE) {
+            next[r][c]=ASH; age[r][c]=0;
+          } else if (grid[r][c]===ASH) {
+            age[r][c]++;
+            if (age[r][c]>25) next[r][c]=Math.random()<0.8?TREE:EMPTY;
+          } else if (grid[r][c]===EMPTY && Math.random()<0.002) next[r][c]=TREE;
+        }
+        grid=next;
+      }
+      const colors={[EMPTY]:'#0d0d16',[TREE]:'#2d6a2d',[FIRE]:'#ff6600',[ASH]:'#332211'};
+      function draw() {
+        for (let r=0;r<ROWS;r++) for (let c=0;c<COLS;c++) {
+          ctx.fillStyle=grid[r][c]===FIRE
+            ? `hsl(${Math.random()*30+10},100%,${50+Math.random()*20}%)`
+            : colors[grid[r][c]];
+          ctx.fillRect(c*CELL,r*CELL,CELL,CELL);
+        }
+      }
+      function loop() { step(); draw(); setTimeout(loop, 60); }
+      loop();
+    })();
+
+    // ── Falling Sand preview ──────────────────────────────────────────────────
+    (function() {
+      const canvas = document.getElementById('prev-sand');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.offsetWidth, H = canvas.offsetHeight;
+      canvas.width = W; canvas.height = H;
+      const CELL=4, COLS=Math.floor(W/CELL), ROWS=Math.floor(H/CELL);
+      const EMPTY=0,SAND=1,WATER=2;
+      const grid=new Uint8Array(COLS*ROWS);
+      let t=0;
+      function get(c,r){return(c>=0&&c<COLS&&r>=0&&r<ROWS)?grid[r*COLS+c]:255;}
+      function set(c,r,v){if(c>=0&&c<COLS&&r>=0&&r<ROWS)grid[r*COLS+c]=v;}
+      function step() {
+        t++;
+        if (t%3===0) {
+          const c=Math.floor(COLS/2)+(Math.random()<0.5?-2:2);
+          set(c,0,t%10<6?SAND:WATER);
+        }
+        for (let r=ROWS-2;r>=0;r--) for (let c=(t%2===0?0:COLS-1);(t%2===0?c<COLS:c>=0);(t%2===0?c++:c--)) {
+          const v=get(c,r);
+          if (v===SAND) {
+            if (get(c,r+1)===EMPTY){set(c,r,EMPTY);set(c,r+1,SAND);}
+            else if (get(c-1,r+1)===EMPTY){set(c,r,EMPTY);set(c-1,r+1,SAND);}
+            else if (get(c+1,r+1)===EMPTY){set(c,r,EMPTY);set(c+1,r+1,SAND);}
+          } else if (v===WATER) {
+            if (get(c,r+1)===EMPTY){set(c,r,EMPTY);set(c,r+1,WATER);}
+            else if (get(c-1,r+1)===EMPTY){set(c,r,EMPTY);set(c-1,r+1,WATER);}
+            else if (get(c+1,r+1)===EMPTY){set(c,r,EMPTY);set(c+1,r+1,WATER);}
+            else if (get(c-1,r)===EMPTY){set(c,r,EMPTY);set(c-1,r,WATER);}
+            else if (get(c+1,r)===EMPTY){set(c,r,EMPTY);set(c+1,r,WATER);}
+          }
+        }
+      }
+      function draw() {
+        ctx.fillStyle='#0d0d16'; ctx.fillRect(0,0,W,H);
+        for (let r=0;r<ROWS;r++) for (let c=0;c<COLS;c++) {
+          const v=grid[r*COLS+c];
+          if (v===SAND) ctx.fillStyle='#c8a84b';
+          else if (v===WATER) ctx.fillStyle='#4499dd';
+          else continue;
+          ctx.fillRect(c*CELL,r*CELL,CELL,CELL);
+        }
+      }
+      function loop() { step(); draw(); setTimeout(loop, 30); }
+      loop();
+    })();
+
+    // ── Schelling Segregation preview ─────────────────────────────────────────
+    (function() {
+      const canvas = document.getElementById('prev-seg');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.offsetWidth, H = canvas.offsetHeight;
+      canvas.width = W; canvas.height = H;
+      const CELL=8, COLS=Math.floor(W/CELL), ROWS=Math.floor(H/CELL);
+      const grid=Array.from({length:ROWS},()=>Array.from({length:COLS},()=>
+        Math.random()<0.1?0:Math.random()<0.5?1:2));
+      const threshold=0.35;
+      function happy(r,c) {
+        const type=grid[r][c]; if(!type) return true;
+        let same=0,total=0;
+        for (let dr=-1;dr<=1;dr++) for (let dc=-1;dc<=1;dc++) {
+          if(!dr&&!dc) continue;
+          const nr=r+dr,nc=c+dc;
+          if(nr<0||nr>=ROWS||nc<0||nc>=COLS) continue;
+          if(grid[nr][nc]) { total++; if(grid[nr][nc]===type) same++; }
+        }
+        return total===0||same/total>=threshold;
+      }
+      function step() {
+        const unhappy=[];
+        const empty=[];
+        for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) {
+          if(!grid[r][c]) empty.push([r,c]);
+          else if(!happy(r,c)) unhappy.push([r,c]);
+        }
+        const moves=Math.min(unhappy.length,empty.length,3);
+        for(let i=0;i<moves;i++) {
+          const ui=Math.floor(Math.random()*unhappy.length);
+          const ei=Math.floor(Math.random()*empty.length);
+          const [ur,uc]=unhappy.splice(ui,1)[0];
+          const [er,ec]=empty.splice(ei,1)[0];
+          grid[er][ec]=grid[ur][uc]; grid[ur][uc]=0;
+        }
+      }
+      const cols={1:'#7c6af7',2:'#4fc3f7'};
+      function draw() {
+        for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) {
+          ctx.fillStyle=grid[r][c]?cols[grid[r][c]]:'#0d0d16';
+          ctx.fillRect(c*CELL,r*CELL,CELL,CELL);
+        }
+      }
+      function loop() { step(); draw(); setTimeout(loop, 80); }
+      loop();
+    })();
+  </script>
+</body>
+</html>

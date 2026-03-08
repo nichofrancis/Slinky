@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Schelling Segregation</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e;
+      --accent: #7c6af7; --accent2: #4fc3f7;
+      --text: #e2e2f0; --muted: #6b6b8a;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif;
+      display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    header { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1rem;
+      background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+    .back { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+    .back:hover { color: var(--text); }
+    h1 { font-size: 1.1rem; font-weight: 700; }
+    .controls { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; flex: 1; }
+    button { background: var(--border); border: 1px solid #2a2a3e; color: var(--text);
+      padding: 0.35rem 0.85rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+    button:hover { background: var(--accent); border-color: var(--accent); }
+    button.active { background: var(--accent); border-color: var(--accent); }
+    label { font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
+    input[type=range] { width: 80px; accent-color: var(--accent); }
+    canvas { display: block; image-rendering: pixelated; }
+    .canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+    .stats { font-size: 0.8rem; color: var(--muted); display: flex; gap: 1rem; }
+    .stat-val { color: var(--text); font-weight: 600; }
+    footer { padding: 0.4rem 1rem; background: var(--surface); border-top: 1px solid var(--border);
+      font-size: 0.75rem; color: var(--muted); display: flex; gap: 1.5rem; flex-shrink: 0; align-items: center; }
+    .legend { display: flex; gap: 1rem; align-items: center; }
+    .leg { display: flex; align-items: center; gap: 4px; }
+    .ldot { width: 10px; height: 10px; border-radius: 2px; }
+  </style>
+</head>
+<body>
+<header>
+  <a class="back" href="../index.html">← Back</a>
+  <h1>Schelling Segregation</h1>
+  <div class="controls">
+    <button id="btn-reset">Reset</button>
+    <button id="btn-play">⏸ Pause</button>
+    <label>Threshold <input type="range" id="threshold" min="0" max="1" step="0.05" value="0.35"><span id="lbl-threshold">35%</span></label>
+    <label>Vacancy <input type="range" id="vacancy" min="0.05" max="0.4" step="0.01" value="0.12"><span id="lbl-vacancy">12%</span></label>
+    <label>Groups <input type="range" id="groups" min="2" max="4" step="1" value="2"><span id="lbl-groups">2</span></label>
+    <label>Grid <input type="range" id="grid-size" min="20" max="100" step="5" value="50"><span id="lbl-grid">50</span></label>
+    <label>Speed <input type="range" id="speed" min="1" max="50" value="10"><span id="lbl-speed">10</span></label>
+    <div class="stats">
+      Unhappy: <span class="stat-val" id="stat-unhappy">0</span>
+      Segregation: <span class="stat-val" id="stat-seg">0%</span>
+    </div>
+  </div>
+</header>
+<div class="canvas-wrap" id="wrap">
+  <canvas id="canvas"></canvas>
+</div>
+<footer>
+  <div class="legend">
+    <div class="leg"><div class="ldot" style="background:#7c6af7"></div>Group A</div>
+    <div class="leg"><div class="ldot" style="background:#4fc3f7"></div>Group B</div>
+    <div class="leg"><div class="ldot" style="background:#ff6b6b"></div>Group C</div>
+    <div class="leg"><div class="ldot" style="background:#69db7c"></div>Group D</div>
+    <div class="leg"><div class="ldot" style="background:#0a0a0f;border:1px solid #333"></div>Vacant</div>
+  </div>
+  <span>Agents with mild preferences (~35%) for similar neighbours produce stark city-scale segregation.</span>
+</footer>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('wrap');
+
+let GRID = 50, CELL;
+let grid;
+let params = { threshold: 0.35, vacancy: 0.12, groups: 2, speed: 10 };
+let running = true;
+let stepsPerFrame = 1;
+let frameInterval;
+
+const GROUP_COLORS = ['#7c6af7', '#4fc3f7', '#ff6b6b', '#69db7c'];
+const GROUP_COLORS_DARK = ['#5a4db5', '#3a99c5', '#cc5555', '#4aaa5c'];
+
+function setupCanvas() {
+  const size = Math.min(wrap.clientWidth, wrap.clientHeight) - 20;
+  CELL = Math.floor(size / GRID);
+  canvas.width = GRID * CELL;
+  canvas.height = GRID * CELL;
+}
+
+function init() {
+  grid = new Uint8Array(GRID * GRID);
+  const n = GRID * GRID;
+  const vacantCount = Math.floor(n * params.vacancy);
+  const agentCount = n - vacantCount;
+  const perGroup = Math.floor(agentCount / params.groups);
+
+  let cells = Array.from({ length: n }, (_, i) => i);
+  // Shuffle
+  for (let i = cells.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [cells[i], cells[j]] = [cells[j], cells[i]];
+  }
+
+  let ptr = 0;
+  for (let g = 1; g <= params.groups; g++) {
+    const count = g === params.groups ? agentCount - perGroup * (params.groups - 1) : perGroup;
+    for (let i = 0; i < count; i++) grid[cells[ptr++]] = g;
+  }
+  // Rest are 0 (vacant)
+  draw();
+  updateStats();
+}
+
+function isHappy(r, c) {
+  const type = grid[r * GRID + c];
+  if (!type) return true;
+  let same = 0, total = 0;
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      if (!dr && !dc) continue;
+      const nr = r + dr, nc = c + dc;
+      if (nr < 0 || nr >= GRID || nc < 0 || nc >= GRID) continue;
+      const neighbor = grid[nr * GRID + nc];
+      if (neighbor) { total++; if (neighbor === type) same++; }
+    }
+  }
+  if (total === 0) return true;
+  return same / total >= params.threshold;
+}
+
+function step(moves) {
+  const unhappy = [];
+  const vacant = [];
+  for (let r = 0; r < GRID; r++) {
+    for (let c = 0; c < GRID; c++) {
+      const i = r * GRID + c;
+      if (!grid[i]) vacant.push(i);
+      else if (!isHappy(r, c)) unhappy.push(i);
+    }
+  }
+
+  const n = Math.min(moves, unhappy.length, vacant.length);
+  for (let i = 0; i < n; i++) {
+    const ui = Math.floor(Math.random() * unhappy.length);
+    const vi = Math.floor(Math.random() * vacant.length);
+    const uIdx = unhappy.splice(ui, 1)[0];
+    const vIdx = vacant.splice(vi, 1)[0];
+    grid[vIdx] = grid[uIdx];
+    grid[uIdx] = 0;
+    vacant.push(uIdx);
+  }
+
+  return unhappy.length;
+}
+
+function draw() {
+  ctx.fillStyle = '#0a0a0f';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  for (let r = 0; r < GRID; r++) {
+    for (let c = 0; c < GRID; c++) {
+      const v = grid[r * GRID + c];
+      if (!v) continue;
+      // Check happiness for highlight
+      const happy = isHappy(r, c);
+      ctx.fillStyle = happy ? GROUP_COLORS[v - 1] : GROUP_COLORS_DARK[v - 1];
+      ctx.fillRect(c * CELL, r * CELL, CELL - (CELL>4?1:0), CELL - (CELL>4?1:0));
+    }
+  }
+}
+
+function calcSegregation() {
+  let totalSame = 0, totalNeighbors = 0;
+  for (let r = 0; r < GRID; r++) {
+    for (let c = 0; c < GRID; c++) {
+      const type = grid[r * GRID + c];
+      if (!type) continue;
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          if (!dr && !dc) continue;
+          const nr = r + dr, nc = c + dc;
+          if (nr < 0 || nr >= GRID || nc < 0 || nc >= GRID) continue;
+          const n = grid[nr * GRID + nc];
+          if (n) { totalNeighbors++; if (n === type) totalSame++; }
+        }
+      }
+    }
+  }
+  return totalNeighbors ? totalSame / totalNeighbors : 0;
+}
+
+function updateStats() {
+  let unhappy = 0;
+  for (let r = 0; r < GRID; r++) for (let c = 0; c < GRID; c++)
+    if (grid[r*GRID+c] && !isHappy(r,c)) unhappy++;
+  document.getElementById('stat-unhappy').textContent = unhappy;
+  document.getElementById('stat-seg').textContent = Math.round(calcSegregation() * 100) + '%';
+}
+
+let frameNum = 0;
+function loop() {
+  requestAnimationFrame(loop);
+  if (!running) return;
+  frameNum++;
+  if (frameNum % Math.max(1, Math.round(10 / params.speed)) !== 0) return;
+  const unhappy = step(params.speed * 3);
+  draw();
+  updateStats();
+}
+
+// Controls
+document.getElementById('btn-play').addEventListener('click', e => {
+  running = !running;
+  e.target.textContent = running ? '⏸ Pause' : '▶ Play';
+  e.target.classList.toggle('active', !running);
+});
+document.getElementById('btn-reset').addEventListener('click', init);
+
+function bindP(id, key, lbl, fmt) {
+  document.getElementById(id).addEventListener('input', e => {
+    params[key] = +e.target.value;
+    document.getElementById(lbl).textContent = fmt ? fmt(+e.target.value) : e.target.value;
+  });
+}
+bindP('threshold','threshold','lbl-threshold', v => Math.round(v*100)+'%');
+bindP('vacancy','vacancy','lbl-vacancy', v => Math.round(v*100)+'%');
+bindP('speed','speed','lbl-speed');
+
+document.getElementById('groups').addEventListener('input', e => {
+  params.groups = +e.target.value;
+  document.getElementById('lbl-groups').textContent = e.target.value;
+  init();
+});
+document.getElementById('grid-size').addEventListener('input', e => {
+  GRID = +e.target.value;
+  document.getElementById('lbl-grid').textContent = e.target.value;
+  setupCanvas();
+  init();
+});
+
+window.addEventListener('resize', () => { setupCanvas(); draw(); });
+
+setupCanvas();
+init();
+loop();
+</script>
+</body>
+</html>

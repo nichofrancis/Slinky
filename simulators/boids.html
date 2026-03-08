@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Boids Flocking</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e;
+      --accent: #4fc3f7; --text: #e2e2f0; --muted: #6b6b8a;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif;
+      display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    header { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1rem;
+      background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+    .back { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+    .back:hover { color: var(--text); }
+    h1 { font-size: 1.1rem; font-weight: 700; }
+    .controls { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; flex: 1; }
+    button { background: var(--border); border: 1px solid #2a2a3e; color: var(--text);
+      padding: 0.35rem 0.85rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+    button:hover { background: var(--accent); border-color: var(--accent); color: #000; }
+    label { font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
+    input[type=range] { width: 70px; accent-color: var(--accent); }
+    canvas { display: block; }
+    .canvas-wrap { flex: 1; overflow: hidden; }
+    footer { padding: 0.4rem 1rem; background: var(--surface); border-top: 1px solid var(--border);
+      font-size: 0.75rem; color: var(--muted); flex-shrink: 0; }
+  </style>
+</head>
+<body>
+<header>
+  <a class="back" href="../index.html">← Back</a>
+  <h1>Boids Flocking</h1>
+  <div class="controls">
+    <button id="btn-reset">Reset</button>
+    <label>Count <input type="range" id="count" min="10" max="600" value="200"><span id="lbl-count">200</span></label>
+    <label>Separation <input type="range" id="sep" min="0" max="5" step="0.1" value="1.5"><span id="lbl-sep">1.5</span></label>
+    <label>Alignment <input type="range" id="ali" min="0" max="2" step="0.05" value="0.5"><span id="lbl-ali">0.5</span></label>
+    <label>Cohesion <input type="range" id="coh" min="0" max="2" step="0.05" value="0.3"><span id="lbl-coh">0.3</span></label>
+    <label>Speed <input type="range" id="spd" min="0.5" max="6" step="0.1" value="3"><span id="lbl-spd">3</span></label>
+    <label>Vision <input type="range" id="vis" min="20" max="150" value="70"><span id="lbl-vis">70</span></label>
+    <label>Trails <input type="checkbox" id="trails"></label>
+    <label>Predator <input type="checkbox" id="pred"></label>
+  </div>
+</header>
+<div class="canvas-wrap" id="wrap">
+  <canvas id="canvas"></canvas>
+</div>
+<footer>Separation · Alignment · Cohesion — three rules, infinite complexity</footer>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('wrap');
+
+let W, H;
+let boids = [];
+let predator = null;
+let mouse = null;
+let params = {
+  count: 200, sep: 1.5, ali: 0.5, coh: 0.3, spd: 3, vis: 70,
+  trails: false, pred: false
+};
+
+function resize() {
+  W = wrap.clientWidth; H = wrap.clientHeight;
+  canvas.width = W; canvas.height = H;
+}
+
+class Boid {
+  constructor(isPred = false) {
+    this.x = Math.random() * W;
+    this.y = Math.random() * H;
+    const angle = Math.random() * Math.PI * 2;
+    this.vx = Math.cos(angle) * params.spd;
+    this.vy = Math.sin(angle) * params.spd;
+    this.isPred = isPred;
+    this.hue = isPred ? 0 : 180 + Math.random() * 60;
+  }
+
+  update() {
+    let sepX=0,sepY=0,aliX=0,aliY=0,cohX=0,cohY=0;
+    let aliCount=0,cohCount=0;
+    const range = this.isPred ? params.vis*2 : params.vis;
+    const sepDist = this.isPred ? 0 : 25;
+
+    for (const b of boids) {
+      if (b === this || b.isPred !== this.isPred) continue;
+      const dx = b.x - this.x, dy = b.y - this.y;
+      const d = Math.sqrt(dx*dx+dy*dy);
+      if (d < sepDist && d > 0) { sepX -= dx/d; sepY -= dy/d; }
+      if (d < range) {
+        aliX += b.vx; aliY += b.vy; aliCount++;
+        cohX += b.x; cohY += b.y; cohCount++;
+      }
+    }
+
+    if (aliCount) { aliX/=aliCount; aliY/=aliCount; }
+    if (cohCount) { cohX=cohX/cohCount-this.x; cohY=cohY/cohCount-this.y; }
+
+    // Flee predator
+    if (!this.isPred && predator) {
+      const dx = this.x - predator.x, dy = this.y - predator.y;
+      const d = Math.sqrt(dx*dx+dy*dy);
+      if (d < params.vis * 1.5 && d > 0) {
+        this.vx += (dx/d) * 4;
+        this.vy += (dy/d) * 4;
+      }
+    }
+
+    // Hunt prey (predator)
+    if (this.isPred && boids.length > 0) {
+      let nearestD = Infinity, nearestB = null;
+      for (const b of boids) {
+        if (b.isPred) continue;
+        const dx=b.x-this.x,dy=b.y-this.y,d=Math.sqrt(dx*dx+dy*dy);
+        if (d<nearestD) { nearestD=d; nearestB=b; }
+      }
+      if (nearestB) {
+        this.vx += (nearestB.x-this.x)/nearestD * 0.3;
+        this.vy += (nearestB.y-this.y)/nearestD * 0.3;
+      }
+    }
+
+    this.vx += sepX * params.sep * 0.05 + aliX * params.ali * 0.05 + cohX * params.coh * 0.001;
+    this.vy += sepY * params.sep * 0.05 + aliY * params.ali * 0.05 + cohY * params.coh * 0.001;
+
+    // Mouse repulsion
+    if (mouse) {
+      const dx=this.x-mouse.x, dy=this.y-mouse.y, d=Math.sqrt(dx*dx+dy*dy);
+      if (d<80 && d>0) { this.vx+=dx/d*2; this.vy+=dy/d*2; }
+    }
+
+    const speed = Math.sqrt(this.vx*this.vx+this.vy*this.vy);
+    const maxSpd = this.isPred ? params.spd * 1.4 : params.spd;
+    const minSpd = maxSpd * 0.4;
+    if (speed > maxSpd) { this.vx=this.vx/speed*maxSpd; this.vy=this.vy/speed*maxSpd; }
+    if (speed < minSpd && speed > 0) { this.vx=this.vx/speed*minSpd; this.vy=this.vy/speed*minSpd; }
+
+    this.x = (this.x + this.vx + W) % W;
+    this.y = (this.y + this.vy + H) % H;
+  }
+
+  draw() {
+    const angle = Math.atan2(this.vy, this.vx);
+    const size = this.isPred ? 14 : 7;
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate(angle);
+    ctx.beginPath();
+    ctx.moveTo(size * 1.5, 0);
+    ctx.lineTo(-size, size * 0.6);
+    ctx.lineTo(-size * 0.5, 0);
+    ctx.lineTo(-size, -size * 0.6);
+    ctx.closePath();
+    ctx.fillStyle = this.isPred
+      ? `hsl(0,90%,60%)`
+      : `hsla(${this.hue}, 85%, 65%, 0.9)`;
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+function init() {
+  boids = Array.from({length: params.count}, () => new Boid());
+  if (params.pred) {
+    predator = new Boid(true);
+    boids.push(predator);
+  } else {
+    predator = null;
+  }
+}
+
+function loop() {
+  requestAnimationFrame(loop);
+  if (params.trails) {
+    ctx.fillStyle = 'rgba(10,10,15,0.15)';
+  } else {
+    ctx.fillStyle = '#0a0a0f';
+  }
+  ctx.fillRect(0, 0, W, H);
+  for (const b of boids) { b.update(); b.draw(); }
+}
+
+// Controls
+function bindRange(id, key, label) {
+  const el = document.getElementById(id);
+  const lbl = document.getElementById(label);
+  el.addEventListener('input', () => {
+    params[key] = +el.value;
+    lbl.textContent = el.value;
+  });
+}
+bindRange('sep','sep','lbl-sep');
+bindRange('ali','ali','lbl-ali');
+bindRange('coh','coh','lbl-coh');
+bindRange('spd','spd','lbl-spd');
+bindRange('vis','vis','lbl-vis');
+
+document.getElementById('count').addEventListener('input', e => {
+  params.count = +e.target.value;
+  document.getElementById('lbl-count').textContent = e.target.value;
+  init();
+});
+document.getElementById('trails').addEventListener('change', e => params.trails = e.target.checked);
+document.getElementById('pred').addEventListener('change', e => {
+  params.pred = e.target.checked;
+  if (e.target.checked) {
+    predator = new Boid(true);
+    boids.push(predator);
+  } else {
+    boids = boids.filter(b => !b.isPred);
+    predator = null;
+  }
+});
+document.getElementById('btn-reset').addEventListener('click', init);
+
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  mouse = {x: e.clientX - r.left, y: e.clientY - r.top};
+});
+canvas.addEventListener('mouseleave', () => mouse = null);
+
+window.addEventListener('resize', resize);
+resize();
+init();
+loop();
+</script>
+</body>
+</html>

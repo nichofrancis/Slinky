@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reaction-Diffusion</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e;
+      --accent: #e040fb; --text: #e2e2f0; --muted: #6b6b8a;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif;
+      display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    header { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1rem;
+      background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+    .back { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+    .back:hover { color: var(--text); }
+    h1 { font-size: 1.1rem; font-weight: 700; }
+    .controls { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; flex: 1; }
+    button { background: var(--border); border: 1px solid #2a2a3e; color: var(--text);
+      padding: 0.35rem 0.85rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+    button:hover { background: var(--accent); border-color: var(--accent); }
+    label { font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
+    input[type=range] { width: 70px; accent-color: var(--accent); }
+    select { background: var(--border); border: 1px solid #2a2a3e; color: var(--text);
+      padding: 0.35rem 0.5rem; border-radius: 6px; font-size: 0.8rem; }
+    canvas { display: block; cursor: crosshair; }
+    .canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #000; }
+    footer { padding: 0.4rem 1rem; background: var(--surface); border-top: 1px solid var(--border);
+      font-size: 0.75rem; color: var(--muted); flex-shrink: 0; }
+  </style>
+</head>
+<body>
+<header>
+  <a class="back" href="../index.html">← Back</a>
+  <h1>Reaction-Diffusion · Gray-Scott</h1>
+  <div class="controls">
+    <button id="btn-reset">Reset</button>
+    <button id="btn-seed">Seed</button>
+    <select id="preset">
+      <option value="coral">Coral / Worms</option>
+      <option value="spots">Spots</option>
+      <option value="stripes">Stripes</option>
+      <option value="labyrinth">Labyrinth</option>
+      <option value="mitosis">Mitosis</option>
+      <option value="holes">Holes</option>
+    </select>
+    <select id="colormap">
+      <option value="ocean">Ocean</option>
+      <option value="fire">Fire</option>
+      <option value="grayscale">Grayscale</option>
+      <option value="neon">Neon</option>
+      <option value="plasma">Plasma</option>
+    </select>
+    <label>f <input type="range" id="f" min="0.01" max="0.1" step="0.001" value="0.055"><span id="lbl-f">0.055</span></label>
+    <label>k <input type="range" id="k" min="0.04" max="0.075" step="0.001" value="0.062"><span id="lbl-k">0.062</span></label>
+    <label>dA <input type="range" id="dA" min="0.1" max="1.5" step="0.05" value="1.0"><span id="lbl-dA">1.0</span></label>
+    <label>dB <input type="range" id="dB" min="0.05" max="1.0" step="0.025" value="0.5"><span id="lbl-dB">0.5</span></label>
+    <span style="font-size:0.75rem;color:var(--muted)">Click to disturb</span>
+  </div>
+</header>
+<div class="canvas-wrap" id="wrap">
+  <canvas id="canvas"></canvas>
+</div>
+<footer>Gray-Scott model: ∂A/∂t = Dₐ∇²A − AB² + f(1−A) · ∂B/∂t = D_b∇²B + AB² − (f+k)B</footer>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('wrap');
+
+const SCALE = 2; // render at half-res for performance
+let W, H, COLS, ROWS;
+let A, B, nA, nB;
+let imageData;
+
+let params = { f: 0.055, k: 0.062, dA: 1.0, dB: 0.5 };
+
+const PRESETS = {
+  coral:     { f: 0.055, k: 0.062 },
+  spots:     { f: 0.035, k: 0.065 },
+  stripes:   { f: 0.060, k: 0.063 },
+  labyrinth: { f: 0.039, k: 0.058 },
+  mitosis:   { f: 0.028, k: 0.053 },
+  holes:     { f: 0.039, k: 0.058 },
+};
+
+const COLORMAPS = {
+  ocean:     (v) => [Math.floor(v*30), Math.floor(v*100+80*(1-v)), Math.floor(200+v*55)],
+  fire:      (v) => [Math.floor(255*Math.min(1,v*2)), Math.floor(255*Math.max(0,v*2-1)), 0],
+  grayscale: (v) => { const c=Math.floor(v*255); return [c,c,c]; },
+  neon:      (v) => [Math.floor(v*255), Math.floor((1-v)*80+v*20), Math.floor(255*(1-v))],
+  plasma:    (v) => [Math.floor(148+v*107), Math.floor(v*255*0.6), Math.floor(211-v*211)],
+};
+
+function resize() {
+  W = wrap.clientWidth; H = wrap.clientHeight;
+  COLS = Math.floor(W / SCALE);
+  ROWS = Math.floor(H / SCALE);
+  canvas.width = W; canvas.height = H;
+  A = new Float32Array(COLS * ROWS);
+  B = new Float32Array(COLS * ROWS);
+  nA = new Float32Array(COLS * ROWS);
+  nB = new Float32Array(COLS * ROWS);
+  imageData = ctx.createImageData(W, H);
+  seed();
+}
+
+function seed() {
+  A.fill(1); B.fill(0);
+  const cx = Math.floor(COLS / 2), cy = Math.floor(ROWS / 2);
+  for (let r = cy - 10; r < cy + 10; r++) {
+    for (let c = cx - 10; c < cx + 10; c++) {
+      if (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
+        A[r * COLS + c] = 0.5 + (Math.random() - 0.5) * 0.1;
+        B[r * COLS + c] = 0.25 + (Math.random() - 0.5) * 0.1;
+      }
+    }
+  }
+}
+
+function addDisturbance(cx, cy, radius = 15) {
+  const gc = Math.floor(cx / SCALE), gr = Math.floor(cy / SCALE);
+  for (let r = gr - radius; r < gr + radius; r++) {
+    for (let c = gc - radius; c < gc + radius; c++) {
+      if (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
+        const dr = r - gr, dc = c - gc;
+        if (dr*dr + dc*dc < radius*radius) {
+          A[r * COLS + c] = 0.5 + (Math.random() - 0.5) * 0.2;
+          B[r * COLS + c] = 0.25 + (Math.random() - 0.5) * 0.2;
+        }
+      }
+    }
+  }
+}
+
+function step() {
+  const { f, k, dA, dB } = params;
+  const dt = 1.0;
+  for (let r = 1; r < ROWS - 1; r++) {
+    for (let c = 1; c < COLS - 1; c++) {
+      const i = r * COLS + c;
+      const a = A[i], b = B[i];
+      const lapA = A[(r-1)*COLS+c] + A[(r+1)*COLS+c] + A[r*COLS+c-1] + A[r*COLS+c+1] - 4*a;
+      const lapB = B[(r-1)*COLS+c] + B[(r+1)*COLS+c] + B[r*COLS+c-1] + B[r*COLS+c+1] - 4*b;
+      const react = a * b * b;
+      nA[i] = Math.max(0, Math.min(1, a + (dA * lapA * 0.25 - react + f * (1 - a)) * dt));
+      nB[i] = Math.max(0, Math.min(1, b + (dB * lapB * 0.25 + react - (k + f) * b) * dt));
+    }
+  }
+  A.set(nA); B.set(nB);
+}
+
+function draw() {
+  const colorFn = COLORMAPS[document.getElementById('colormap').value] || COLORMAPS.ocean;
+  const data = imageData.data;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const v = Math.max(0, Math.min(1, A[r * COLS + c] - B[r * COLS + c]));
+      const [R, G, Bv] = colorFn(v);
+      for (let dy = 0; dy < SCALE; dy++) {
+        for (let dx = 0; dx < SCALE; dx++) {
+          const px = ((r * SCALE + dy) * W + (c * SCALE + dx)) * 4;
+          data[px] = R; data[px+1] = G; data[px+2] = Bv; data[px+3] = 255;
+        }
+      }
+    }
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+let running = true;
+function loop() {
+  if (!running) { requestAnimationFrame(loop); return; }
+  for (let i = 0; i < 6; i++) step();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// Controls
+document.getElementById('btn-reset').addEventListener('click', () => { A.fill(1); B.fill(0); seed(); });
+document.getElementById('btn-seed').addEventListener('click', () => {
+  const cx = Math.floor(Math.random() * COLS * 0.6 + COLS * 0.2);
+  const cy = Math.floor(Math.random() * ROWS * 0.6 + ROWS * 0.2);
+  addDisturbance(cx * SCALE, cy * SCALE, 10);
+});
+
+document.getElementById('preset').addEventListener('change', e => {
+  const p = PRESETS[e.target.value];
+  if (!p) return;
+  params.f = p.f; params.k = p.k;
+  document.getElementById('f').value = p.f;
+  document.getElementById('k').value = p.k;
+  document.getElementById('lbl-f').textContent = p.f;
+  document.getElementById('lbl-k').textContent = p.k;
+  A.fill(1); B.fill(0); seed();
+});
+
+function bindP(id, key, lbl) {
+  document.getElementById(id).addEventListener('input', e => {
+    params[key] = +e.target.value;
+    document.getElementById(lbl).textContent = (+e.target.value).toFixed(3);
+  });
+}
+bindP('f','f','lbl-f');
+bindP('k','k','lbl-k');
+bindP('dA','dA','lbl-dA');
+bindP('dB','dB','lbl-dB');
+
+let painting = false;
+canvas.addEventListener('mousedown', e => { painting = true; });
+canvas.addEventListener('mouseup', () => painting = false);
+canvas.addEventListener('mousemove', e => {
+  if (!painting) return;
+  const r = canvas.getBoundingClientRect();
+  addDisturbance(e.clientX - r.left, e.clientY - r.top, 12);
+});
+canvas.addEventListener('click', e => {
+  const r = canvas.getBoundingClientRect();
+  addDisturbance(e.clientX - r.left, e.clientY - r.top, 15);
+});
+
+window.addEventListener('resize', () => { resize(); });
+resize();
+loop();
+</script>
+</body>
+</html>

@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Falling Sand</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e;
+      --accent: #ffc107; --text: #e2e2f0; --muted: #6b6b8a;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif;
+      display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    header { display: flex; align-items: center; gap: 0.75rem; padding: 0.65rem 1rem;
+      background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+    .back { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+    .back:hover { color: var(--text); }
+    h1 { font-size: 1.1rem; font-weight: 700; }
+    .controls { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; flex: 1; }
+    button { background: var(--border); border: 1px solid #2a2a3e; color: var(--text);
+      padding: 0.35rem 0.85rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; transition: background 0.1s; }
+    button:hover { border-color: var(--accent); }
+    button.sel { border-color: var(--accent); background: var(--accent); color: #000; font-weight: 700; }
+    label { font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
+    input[type=range] { width: 60px; accent-color: var(--accent); }
+    canvas { display: block; cursor: crosshair; image-rendering: pixelated; }
+    .canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+    footer { padding: 0.35rem 1rem; background: var(--surface); border-top: 1px solid var(--border);
+      font-size: 0.75rem; color: var(--muted); flex-shrink: 0; display: flex; gap: 1.5rem; align-items: center; }
+    .material-dots { display: flex; gap: 4px; align-items: center; }
+    .mdot { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+  </style>
+</head>
+<body>
+<header>
+  <a class="back" href="../index.html">← Back</a>
+  <h1>Falling Sand</h1>
+  <div class="controls">
+    <button id="btn-clear">Clear</button>
+    <button class="sel" data-mat="1" id="mat-1">Sand</button>
+    <button data-mat="2" id="mat-2">Water</button>
+    <button data-mat="3" id="mat-3">Stone</button>
+    <button data-mat="4" id="mat-4">Fire</button>
+    <button data-mat="5" id="mat-5">Oil</button>
+    <button data-mat="6" id="mat-6">Steam</button>
+    <button data-mat="7" id="mat-7">Wood</button>
+    <button data-mat="0" id="mat-0">Erase</button>
+    <label>Brush <input type="range" id="brush" min="1" max="15" value="4"><span id="lbl-brush">4</span></label>
+    <label>Speed <input type="range" id="speed" min="1" max="5" value="3"><span id="lbl-speed">3</span></label>
+  </div>
+</header>
+<div class="canvas-wrap" id="wrap">
+  <canvas id="canvas"></canvas>
+</div>
+<footer>
+  <span>Draw with mouse · Right-click to erase</span>
+  <span id="fps">0 fps</span>
+</footer>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('wrap');
+
+const CELL = 3;
+let W, H, COLS, ROWS;
+let COLS_INT;
+
+// Materials
+const EMPTY = 0, SAND = 1, WATER = 2, STONE = 3, FIRE = 4, OIL = 5, STEAM = 6, WOOD = 7, ASH = 8, SMOKE = 9;
+
+let grid, velocity; // velocity for water flow direction
+let imageData;
+let brushSize = 4;
+let currentMat = SAND;
+let painting = false;
+let stepsPerFrame = 3;
+let frameCount = 0, lastFpsTime = 0, fps = 0;
+
+const COLORS = {
+  [EMPTY]: null,
+  [SAND]:  () => [190 + rand(40), 160 + rand(30), 80 + rand(20)],
+  [WATER]: () => [40 + rand(20), 100 + rand(40), 200 + rand(40)],
+  [STONE]: () => [90 + rand(30), 90 + rand(30), 100 + rand(30)],
+  [FIRE]:  () => { const t=Math.random(); return [255, Math.floor(t*150), 0]; },
+  [OIL]:   () => [80 + rand(20), 55 + rand(15), 30 + rand(10)],
+  [STEAM]: () => [160 + rand(40), 160 + rand(40), 180 + rand(30)],
+  [WOOD]:  () => [100 + rand(20), 60 + rand(20), 20 + rand(10)],
+  [ASH]:   () => [50 + rand(20), 45 + rand(20), 40 + rand(20)],
+  [SMOKE]: () => [80 + rand(30), 80 + rand(30), 90 + rand(30)],
+};
+
+function rand(n) { return Math.floor(Math.random() * n); }
+
+function resize() {
+  W = wrap.clientWidth; H = wrap.clientHeight;
+  COLS = Math.floor(W / CELL); ROWS = Math.floor(H / CELL);
+  canvas.width = COLS * CELL; canvas.height = ROWS * CELL;
+  grid = new Uint8Array(COLS * ROWS);
+  velocity = new Int8Array(COLS * ROWS); // -1=left, 1=right, 0=unset
+  imageData = ctx.createImageData(canvas.width, canvas.height);
+}
+
+function idx(c, r) { return r * COLS + c; }
+function get(c, r) { return (c>=0&&c<COLS&&r>=0&&r<ROWS) ? grid[idx(c,r)] : STONE; }
+function set(c, r, v) { if (c>=0&&c<COLS&&r>=0&&r<ROWS) grid[idx(c,r)]=v; }
+function isEmpty(c, r) { const v=get(c,r); return v===EMPTY||v===STEAM||v===SMOKE; }
+function isLiquid(c, r) { const v=get(c,r); return v===WATER||v===OIL; }
+function isFlammable(c, r) { const v=get(c,r); return v===OIL||v===WOOD; }
+
+// Visited flag to avoid processing cells twice per step
+let visited;
+
+function step() {
+  visited = new Uint8Array(COLS * ROWS);
+  const dir = Math.random() < 0.5 ? 1 : -1;
+
+  for (let r = ROWS - 1; r >= 0; r--) {
+    const cStart = dir === 1 ? 0 : COLS - 1;
+    const cEnd = dir === 1 ? COLS : -1;
+    for (let c = cStart; c !== cEnd; c += dir) {
+      const i = idx(c, r);
+      if (visited[i]) continue;
+      const v = grid[i];
+      if (v === EMPTY) continue;
+      visited[i] = 1;
+
+      if (v === SAND) {
+        // Fall down
+        if (isEmpty(c, r+1)) { set(c,r+1,SAND); set(c,r,EMPTY); visited[idx(c,r+1)]=1; }
+        else if (isEmpty(c-1,r+1) && isEmpty(c+1,r+1)) {
+          const d = Math.random()<0.5?-1:1;
+          set(c+d,r+1,SAND); set(c,r,EMPTY); visited[idx(c+d,r+1)]=1;
+        } else if (isEmpty(c-1,r+1)) { set(c-1,r+1,SAND); set(c,r,EMPTY); visited[idx(c-1,r+1)]=1; }
+        else if (isEmpty(c+1,r+1)) { set(c+1,r+1,SAND); set(c,r,EMPTY); visited[idx(c+1,r+1)]=1; }
+        // Displace water
+        else if (isLiquid(c,r+1)) {
+          const wv = get(c,r+1); set(c,r+1,SAND); set(c,r,wv); visited[idx(c,r+1)]=1;
+        }
+      } else if (v === WATER) {
+        if (isEmpty(c, r+1)) { set(c,r+1,WATER); set(c,r,EMPTY); visited[idx(c,r+1)]=1; }
+        else if (isEmpty(c-1,r+1) && isEmpty(c+1,r+1)) {
+          const d=Math.random()<0.5?-1:1; set(c+d,r+1,WATER); set(c,r,EMPTY); visited[idx(c+d,r+1)]=1;
+        } else if (isEmpty(c-1,r+1)) { set(c-1,r+1,WATER); set(c,r,EMPTY); visited[idx(c-1,r+1)]=1; }
+        else if (isEmpty(c+1,r+1)) { set(c+1,r+1,WATER); set(c,r,EMPTY); visited[idx(c+1,r+1)]=1; }
+        else {
+          // Flow sideways
+          let vd = velocity[i] || (Math.random()<0.5?1:-1);
+          if (isEmpty(c+vd, r)) { set(c+vd,r,WATER); set(c,r,EMPTY); velocity[idx(c+vd,r)]=vd; visited[idx(c+vd,r)]=1; }
+          else if (isEmpty(c-vd, r)) { set(c-vd,r,WATER); set(c,r,EMPTY); velocity[idx(c-vd,r)]=-vd; visited[idx(c-vd,r)]=1; }
+        }
+      } else if (v === OIL) {
+        // Like water but floats on water
+        if (isEmpty(c, r+1)) { set(c,r+1,OIL); set(c,r,EMPTY); visited[idx(c,r+1)]=1; }
+        else if (get(c,r+1)===WATER) { set(c,r+1,OIL); set(c,r,WATER); visited[idx(c,r+1)]=1; }
+        else if (isEmpty(c-1,r+1)) { set(c-1,r+1,OIL); set(c,r,EMPTY); visited[idx(c-1,r+1)]=1; }
+        else if (isEmpty(c+1,r+1)) { set(c+1,r+1,OIL); set(c,r,EMPTY); visited[idx(c+1,r+1)]=1; }
+        else if (isEmpty(c-1,r)) { set(c-1,r,OIL); set(c,r,EMPTY); visited[idx(c-1,r)]=1; }
+        else if (isEmpty(c+1,r)) { set(c+1,r,OIL); set(c,r,EMPTY); visited[idx(c+1,r)]=1; }
+      } else if (v === STEAM || v === SMOKE) {
+        // Rise up
+        if (get(c,r-1)===EMPTY) { set(c,r-1,v); set(c,r,EMPTY); visited[idx(c,r-1)]=1; }
+        else if (get(c-1,r-1)===EMPTY && get(c+1,r-1)===EMPTY) {
+          const d=Math.random()<0.5?-1:1; set(c+d,r-1,v); set(c,r,EMPTY); visited[idx(c+d,r-1)]=1;
+        } else if (get(c-1,r-1)===EMPTY) { set(c-1,r-1,v); set(c,r,EMPTY); visited[idx(c-1,r-1)]=1; }
+        else if (get(c+1,r-1)===EMPTY) { set(c+1,r-1,v); set(c,r,EMPTY); visited[idx(c+1,r-1)]=1; }
+        else if (get(c-1,r)===EMPTY) { set(c-1,r,v); set(c,r,EMPTY); visited[idx(c-1,r)]=1; }
+        else if (get(c+1,r)===EMPTY) { set(c+1,r,v); set(c,r,EMPTY); visited[idx(c+1,r)]=1; }
+        // Disperse over time
+        if (Math.random() < 0.002) set(c,r,EMPTY);
+      } else if (v === FIRE) {
+        // Spread to flammable neighbors
+        for (let dr=-1;dr<=1;dr++) for (let dc=-1;dc<=1;dc++) {
+          if (!dr&&!dc) continue;
+          if (isFlammable(c+dc,r+dr) && Math.random()<0.05) set(c+dc,r+dr,FIRE);
+          if (get(c+dc,r+dr)===WATER && Math.random()<0.3) { set(c,r,STEAM); break; }
+        }
+        // Fire rises slightly
+        if (get(c,r-1)===EMPTY && Math.random()<0.4) { set(c,r-1,FIRE); visited[idx(c,r-1)]=1; }
+        // Emit smoke above
+        if (get(c,r-1)===EMPTY && Math.random()<0.1) { set(c,r-1,SMOKE); }
+        // Burns out
+        if (Math.random()<0.04) set(c,r,ASH);
+      } else if (v === ASH) {
+        if (isEmpty(c,r+1)) { set(c,r+1,ASH); set(c,r,EMPTY); visited[idx(c,r+1)]=1; }
+        else if (isEmpty(c-1,r+1)) { set(c-1,r+1,ASH); set(c,r,EMPTY); visited[idx(c-1,r+1)]=1; }
+        else if (isEmpty(c+1,r+1)) { set(c+1,r+1,ASH); set(c,r,EMPTY); visited[idx(c+1,r+1)]=1; }
+      }
+    }
+  }
+}
+
+function draw() {
+  const data = imageData.data;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const v = grid[idx(c,r)];
+      let R=13, G=13, B=22;
+      if (v !== EMPTY && COLORS[v]) {
+        [R,G,B] = COLORS[v]();
+      }
+      for (let dy = 0; dy < CELL; dy++) {
+        for (let dx = 0; dx < CELL; dx++) {
+          const px = ((r*CELL+dy)*canvas.width + (c*CELL+dx))*4;
+          data[px]=R; data[px+1]=G; data[px+2]=B; data[px+3]=255;
+        }
+      }
+    }
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+let raf;
+function loop(ts) {
+  requestAnimationFrame(loop);
+  frameCount++;
+  if (ts - lastFpsTime >= 1000) {
+    fps = frameCount; frameCount = 0; lastFpsTime = ts;
+    document.getElementById('fps').textContent = fps + ' fps';
+  }
+  for (let i = 0; i < stepsPerFrame; i++) step();
+  draw();
+}
+
+// Paint
+function paint(e) {
+  const r = canvas.getBoundingClientRect();
+  const gc = Math.floor((e.clientX - r.left) / CELL);
+  const gr = Math.floor((e.clientY - r.top) / CELL);
+  const mat = e.button === 2 ? EMPTY : currentMat;
+  const bs = brushSize;
+  for (let dr = -bs; dr <= bs; dr++) {
+    for (let dc = -bs; dc <= bs; dc++) {
+      if (dr*dr+dc*dc <= bs*bs && (mat===EMPTY || get(gc+dc,gr+dr)===EMPTY || mat===STONE||mat===WOOD)) {
+        if (Math.random() < 0.7 || mat===STONE||mat===WOOD||mat===EMPTY)
+          set(gc+dc, gr+dr, mat);
+      }
+    }
+  }
+}
+
+canvas.addEventListener('mousedown', e => { painting=true; paint(e); });
+canvas.addEventListener('mousemove', e => { if(painting) paint(e); });
+canvas.addEventListener('mouseup', () => painting=false);
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// Material buttons
+const MAT_NAMES = { 0:'Erase', 1:'Sand', 2:'Water', 3:'Stone', 4:'Fire', 5:'Oil', 6:'Steam', 7:'Wood' };
+document.querySelectorAll('[data-mat]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    currentMat = +btn.dataset.mat;
+    document.querySelectorAll('[data-mat]').forEach(b => b.classList.remove('sel'));
+    btn.classList.add('sel');
+  });
+});
+
+document.getElementById('btn-clear').addEventListener('click', () => grid.fill(0));
+document.getElementById('brush').addEventListener('input', e => {
+  brushSize = +e.target.value;
+  document.getElementById('lbl-brush').textContent = e.target.value;
+});
+document.getElementById('speed').addEventListener('input', e => {
+  stepsPerFrame = +e.target.value;
+  document.getElementById('lbl-speed').textContent = e.target.value;
+});
+
+window.addEventListener('resize', resize);
+resize();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

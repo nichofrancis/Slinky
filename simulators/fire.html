@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Forest Fire</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e;
+      --accent: #ff6d00; --text: #e2e2f0; --muted: #6b6b8a;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif;
+      display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    header { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1rem;
+      background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+    .back { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+    .back:hover { color: var(--text); }
+    h1 { font-size: 1.1rem; font-weight: 700; }
+    .controls { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; flex: 1; }
+    button { background: var(--border); border: 1px solid #2a2a3e; color: var(--text);
+      padding: 0.35rem 0.85rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+    button:hover { background: var(--accent); border-color: var(--accent); }
+    button.active { background: var(--accent); border-color: var(--accent); }
+    label { font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
+    input[type=range] { width: 70px; accent-color: var(--accent); }
+    canvas { display: block; cursor: crosshair; image-rendering: pixelated; }
+    .canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+    .stats { display: flex; gap: 1rem; font-size: 0.8rem; color: var(--muted); }
+    .stat-val { color: var(--text); font-weight: 600; }
+    footer { padding: 0.4rem 1rem; background: var(--surface); border-top: 1px solid var(--border);
+      font-size: 0.75rem; color: var(--muted); display: flex; gap: 1.5rem; flex-shrink: 0; align-items: center; }
+  </style>
+</head>
+<body>
+<header>
+  <a class="back" href="../index.html">← Back</a>
+  <h1>Forest Fire</h1>
+  <div class="controls">
+    <button id="btn-reset">Reset</button>
+    <button id="btn-ignite">Ignite</button>
+    <button id="btn-firebreak">Firebreak mode</button>
+    <label>Density <input type="range" id="density" min="0.1" max="0.95" step="0.01" value="0.65"><span id="lbl-density">0.65</span></label>
+    <label>Spread <input type="range" id="spread" min="0.3" max="1" step="0.01" value="0.80"><span id="lbl-spread">0.80</span></label>
+    <label>Lightning <input type="range" id="lightning" min="0" max="0.003" step="0.00005" value="0.0003"><span id="lbl-lightning">0.0003</span></label>
+    <label>Growth <input type="range" id="growth" min="0.0005" max="0.015" step="0.0005" value="0.004"><span id="lbl-growth">0.004</span></label>
+    <label>Speed <input type="range" id="speed" min="1" max="20" value="8"><span id="lbl-speed">8</span></label>
+    <div class="stats">
+      Trees: <span class="stat-val" id="stat-trees">0</span>
+      Fires: <span class="stat-val" id="stat-fires">0</span>
+    </div>
+  </div>
+</header>
+<div class="canvas-wrap" id="wrap">
+  <canvas id="canvas"></canvas>
+</div>
+<footer>
+  <span>Click to ignite / draw firebreaks (toggle) · Green=tree · Orange=fire · Dark=ash</span>
+</footer>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('wrap');
+
+const CELL = 5;
+const EMPTY = 0, TREE = 1, FIRE = 2, ASH = 3;
+
+let COLS, ROWS, W, H;
+let grid, ashAge;
+let params = { density: 0.65, spread: 0.80, lightning: 0.0003, growth: 0.004, speed: 8 };
+let firebreakMode = false;
+let painting = false;
+let stepsPerFrame = 1;
+
+function resize() {
+  W = wrap.clientWidth; H = wrap.clientHeight;
+  COLS = Math.floor(W / CELL); ROWS = Math.floor(H / CELL);
+  canvas.width = COLS * CELL; canvas.height = ROWS * CELL;
+  grid = new Uint8Array(COLS * ROWS);
+  ashAge = new Uint8Array(COLS * ROWS);
+  init();
+}
+
+function init() {
+  for (let i = 0; i < grid.length; i++) {
+    grid[i] = Math.random() < params.density ? TREE : EMPTY;
+    ashAge[i] = 0;
+  }
+  updateStats();
+}
+
+function get(c, r) { return (c>=0&&c<COLS&&r>=0&&r<ROWS) ? grid[r*COLS+c] : EMPTY; }
+function set(c, r, v) { if (c>=0&&c<COLS&&r>=0&&r<ROWS) { grid[r*COLS+c]=v; if(v!==ASH) ashAge[r*COLS+c]=0; } }
+
+function step() {
+  const next = new Uint8Array(grid);
+  const nextAge = new Uint8Array(ashAge);
+  let trees = 0, fires = 0;
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const i = r * COLS + c;
+      const v = grid[i];
+      if (v === TREE) {
+        trees++;
+        let burn = false;
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            if (!dr && !dc) continue;
+            if (get(c+dc, r+dr) === FIRE && Math.random() < params.spread) { burn = true; break; }
+          }
+          if (burn) break;
+        }
+        if (burn || Math.random() < params.lightning) next[i] = FIRE;
+      } else if (v === FIRE) {
+        fires++;
+        next[i] = ASH; nextAge[i] = 0;
+      } else if (v === ASH) {
+        nextAge[i]++;
+        if (nextAge[i] > 30 && Math.random() < params.growth) next[i] = TREE;
+      } else if (v === EMPTY) {
+        if (Math.random() < params.growth * 0.3) next[i] = TREE;
+      }
+    }
+  }
+  grid.set(next); ashAge.set(nextAge);
+  document.getElementById('stat-trees').textContent = trees;
+  document.getElementById('stat-fires').textContent = fires;
+}
+
+const FIRE_PALETTE = [];
+for (let i = 0; i < 256; i++) {
+  const t = i / 255;
+  FIRE_PALETTE.push([
+    Math.floor(255 * Math.min(1, t * 2)),
+    Math.floor(255 * Math.max(0, t * 2 - 1)),
+    0
+  ]);
+}
+
+const C_EMPTY = [13, 13, 22];
+const C_TREE_BASE = [20, 80, 20];
+const C_ASH = [35, 25, 15];
+
+function draw() {
+  const img = ctx.createImageData(canvas.width, canvas.height);
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const v = grid[r * COLS + c];
+      let R, G, B;
+      if (v === EMPTY) { [R,G,B] = C_EMPTY; }
+      else if (v === TREE) {
+        // Vary tree shade
+        const shade = 0.7 + Math.random() * 0.3;
+        R = Math.floor(C_TREE_BASE[0] * shade);
+        G = Math.floor((C_TREE_BASE[1] + Math.random() * 20) * shade);
+        B = Math.floor(C_TREE_BASE[2] * shade);
+      }
+      else if (v === FIRE) {
+        const t = Math.random();
+        R = Math.floor(255);
+        G = Math.floor(t * 120);
+        B = 0;
+      }
+      else { // ASH
+        const age = ashAge[r * COLS + c];
+        const fade = Math.min(1, age / 30);
+        R = Math.floor(35 + (C_TREE_BASE[0] - 35) * fade);
+        G = Math.floor(25 + (C_TREE_BASE[1] - 25) * fade);
+        B = Math.floor(15 + (C_TREE_BASE[2] - 15) * fade);
+      }
+      for (let dy = 0; dy < CELL; dy++) {
+        for (let dx = 0; dx < CELL; dx++) {
+          const idx = ((r * CELL + dy) * canvas.width + (c * CELL + dx)) * 4;
+          img.data[idx] = R; img.data[idx+1] = G; img.data[idx+2] = B; img.data[idx+3] = 255;
+        }
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function updateStats() {
+  let trees = 0, fires = 0;
+  for (const v of grid) { if (v===TREE) trees++; if (v===FIRE) fires++; }
+  document.getElementById('stat-trees').textContent = trees;
+  document.getElementById('stat-fires').textContent = fires;
+}
+
+let frameSkip = 0;
+function loop() {
+  requestAnimationFrame(loop);
+  frameSkip++;
+  if (frameSkip >= Math.ceil(10 / params.speed)) {
+    frameSkip = 0;
+    step();
+    draw();
+  }
+}
+
+// Controls
+document.getElementById('btn-reset').addEventListener('click', () => {
+  grid.fill(0); ashAge.fill(0); init();
+});
+document.getElementById('btn-ignite').addEventListener('click', () => {
+  const c = Math.floor(COLS/2), r = Math.floor(ROWS/2);
+  for (let dr = -3; dr <= 3; dr++) for (let dc = -3; dc <= 3; dc++) {
+    if (get(c+dc, r+dr) === TREE) set(c+dc, r+dr, FIRE);
+  }
+});
+
+document.getElementById('btn-firebreak').addEventListener('click', e => {
+  firebreakMode = !firebreakMode;
+  e.target.classList.toggle('active', firebreakMode);
+  e.target.textContent = firebreakMode ? '🛑 Firebreak ON' : 'Firebreak mode';
+  canvas.style.cursor = firebreakMode ? 'cell' : 'crosshair';
+});
+
+function bind(id, key, lbl) {
+  document.getElementById(id).addEventListener('input', e => {
+    params[key] = +e.target.value;
+    document.getElementById(lbl).textContent = e.target.value;
+  });
+}
+bind('density','density','lbl-density');
+bind('spread','spread','lbl-spread');
+bind('lightning','lightning','lbl-lightning');
+bind('growth','growth','lbl-growth');
+bind('speed','speed','lbl-speed');
+
+function canvasPos(e) {
+  const r = canvas.getBoundingClientRect();
+  return [
+    Math.floor((e.clientX - r.left) / CELL),
+    Math.floor((e.clientY - r.top) / CELL)
+  ];
+}
+
+canvas.addEventListener('mousedown', e => {
+  painting = true;
+  const [c, r] = canvasPos(e);
+  if (firebreakMode) {
+    for (let dr=-1;dr<=1;dr++) for (let dc=-1;dc<=1;dc++) set(c+dc,r+dr,EMPTY);
+  } else {
+    for (let dr=-2;dr<=2;dr++) for (let dc=-2;dc<=2;dc++) {
+      if (get(c+dc,r+dr)===TREE) set(c+dc,r+dr,FIRE);
+    }
+  }
+});
+canvas.addEventListener('mousemove', e => {
+  if (!painting) return;
+  const [c, r] = canvasPos(e);
+  if (firebreakMode) {
+    for (let dr=-1;dr<=1;dr++) for (let dc=-1;dc<=1;dc++) set(c+dc,r+dr,EMPTY);
+  } else {
+    if (get(c,r)===TREE) set(c,r,FIRE);
+  }
+});
+canvas.addEventListener('mouseup', () => painting = false);
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+window.addEventListener('resize', resize);
+resize();
+loop();
+</script>
+</body>
+</html>
