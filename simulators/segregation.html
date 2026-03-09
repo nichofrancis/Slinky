@@ -65,7 +65,7 @@
     <div class="leg"><div class="ldot" style="background:#69db7c"></div>Group D</div>
     <div class="leg"><div class="ldot" style="background:#0a0a0f;border:1px solid #333"></div>Vacant</div>
   </div>
-  <span>Agents with mild preferences (~35%) for similar neighbours produce stark city-scale segregation.</span>
+  <span>Agents with mild preferences (~35%) for similar neighbours produce stark city-scale segregation. Click cells to cycle group type.</span>
 </footer>
 
 <script>
@@ -238,6 +238,18 @@ document.getElementById('grid-size').addEventListener('input', e => {
   document.getElementById('lbl-grid').textContent = e.target.value;
   setupCanvas();
   init();
+});
+
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect();
+  const c = Math.floor((e.clientX - rect.left) / CELL);
+  const r = Math.floor((e.clientY - rect.top) / CELL);
+  if (c < 0 || c >= GRID || r < 0 || r >= GRID) return;
+  const i = r * GRID + c;
+  // Cycle: empty → group1 → group2 → ... → empty
+  grid[i] = (grid[i] + 1) % (params.groups + 1);
+  draw();
+  updateStats();
 });
 
 window.addEventListener('resize', () => { setupCanvas(); draw(); });

@@ -71,6 +71,7 @@ let trailFood, trailHome;
 let ants = [];
 let foodSources = [];
 let colony = null;
+let imageData;
 
 let params = { antCount:150, decay:0.997, wander:0.45, strength:4 };
 
@@ -81,6 +82,7 @@ function resize() {
   ROWS = Math.floor(H / CELL);
   trailFood = new Float32Array(COLS * ROWS);
   trailHome = new Float32Array(COLS * ROWS);
+  imageData = ctx.createImageData(W, H);
 }
 
 function tIdx(c, r) { return r * COLS + c; }
@@ -191,7 +193,7 @@ function step() {
 }
 
 function draw() {
-  const img = ctx.createImageData(W, H);
+  const img = imageData;
   // Render trails
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {

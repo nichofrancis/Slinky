@@ -230,6 +230,7 @@ canvas.addEventListener('mousemove', e => {
   draw();
 });
 canvas.addEventListener('mouseup', () => painting = false);
+window.addEventListener('mouseup', () => painting = false);
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 
 window.addEventListener('resize', () => {

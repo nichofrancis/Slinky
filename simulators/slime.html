@@ -60,7 +60,7 @@
 <div class="canvas-wrap" id="wrap">
   <canvas id="canvas"></canvas>
 </div>
-<footer>Physarum-inspired: agents sense chemical gradients and steer toward stronger signals, building networks.</footer>
+<footer>Physarum-inspired: agents sense chemical gradients and steer toward stronger signals, building networks. Click to spawn agents.</footer>
 
 <script>
 const canvas = document.getElementById('canvas');
@@ -68,7 +68,7 @@ const ctx = canvas.getContext('2d');
 const wrap = document.getElementById('wrap');
 
 let W, H;
-let trail;
+let trail, trailTmp;
 let agents = [];
 let imageData;
 
@@ -93,6 +93,7 @@ function resize() {
   W = wrap.clientWidth; H = wrap.clientHeight;
   canvas.width = W; canvas.height = H;
   trail = new Float32Array(W * H);
+  trailTmp = new Float32Array(W * H);
   imageData = ctx.createImageData(W, H);
   init();
 }
@@ -173,7 +174,7 @@ function step() {
   }
 
   // Diffuse + decay
-  const tmp = new Float32Array(W * H);
+  const tmp = trailTmp;
   const decay = params.decay;
   for (let r = 1; r < H-1; r++) {
     for (let c = 1; c < W-1; c++) {
