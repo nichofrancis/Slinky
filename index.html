@@ -781,7 +781,6 @@
       canvas.width = W; canvas.height = H;
 
       // Simple mountain silhouette via value noise
-      const pts = [];
       let seed = 42;
       const rng = () => { seed ^= seed<<13; seed ^= seed>>>17; seed ^= seed<<5; return (seed>>>0)/0x100000000; };
       // generate heights

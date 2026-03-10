@@ -111,10 +111,9 @@ function build() {
   const seed      = document.getElementById('seed').value || 'moonfall';
   const roughness = +document.getElementById('roughness').value;
   const caveD     = +document.getElementById('cave-density').value;
-  const rng       = mkRng(seed);
-  const surfN     = mkNoise(rng);
-  const caveN     = mkNoise(rng);
-  const starRng   = mkRng(seed + '☆');
+  const rng   = mkRng(seed);
+  const surfN = mkNoise(rng);
+  const caveN = mkNoise(rng);
 
   heights = new Int16Array(COLS);
   grid    = new Uint8Array(COLS * ROWS);
@@ -302,6 +301,8 @@ function updatePlayer() {
 
   if (keys['ArrowLeft']  || keys['a'] || keys['A']) player.angle -= ROT_SPEED;
   if (keys['ArrowRight'] || keys['d'] || keys['D']) player.angle += ROT_SPEED;
+  // Keep angle in [-π, π] so landing/crash checks always see the true tilt
+  player.angle = ((player.angle + Math.PI) % (2 * Math.PI)) - Math.PI;
 
   const thrusting = (keys['ArrowUp'] || keys['w'] || keys['W']) && player.fuel > 0;
   if (thrusting) {
