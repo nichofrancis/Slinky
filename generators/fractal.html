@@ -60,8 +60,9 @@ const ctx = canvas.getContext('2d');
 const wrap = document.getElementById('wrap');
 let W, H, imageData;
 let fracGrid = null, fracSize = 0;
-let player = null, cachedTerrain = null, playerRaf = null;
-const keys = {};
+let player = null, cachedTerrain = null;
+let sl = 0.32; // cached sea-level — updated each render() so isHikeable() avoids per-frame DOM reads
+const keys = {}; // tracks which movement keys are currently held
 
 // ── PRNG ─────────────────────────────────────────────────────────────────────
 function hashStr(s) {
@@ -174,7 +175,7 @@ function topoColor(h, sl) {
 // ── Render ────────────────────────────────────────────────────────────────────
 function render() {
   if (!fracGrid) return;
-  const sl=parseFloat(document.getElementById('sealevel').value);
+  sl=parseFloat(document.getElementById('sealevel').value); // refresh cache
   const style=document.getElementById('style').value;
   const doShade=document.getElementById('hillshade').checked;
   const {g, size}=fracGrid;
@@ -213,7 +214,7 @@ function render() {
     data[pi]=R;data[pi+1]=G;data[pi+2]=B;data[pi+3]=255;
   }
   ctx.putImageData(imageData,0,0);
-  cachedTerrain = ctx.getImageData(0,0,W,H);
+  cachedTerrain.data.set(imageData.data); // CPU copy — avoids GPU→CPU readback
   if (player && !isHikeable(player.x, player.y)) {
     player=null; document.getElementById('hint').style.display='';
   }
@@ -235,7 +236,8 @@ function resize(){
   W=wrap.clientWidth;H=wrap.clientHeight;
   canvas.width=W;canvas.height=H;
   imageData=ctx.createImageData(W,H);
-  cachedTerrain=null; player=null;
+  cachedTerrain=ctx.createImageData(W,H); // pre-alloc; filled via .data.set() in render()
+  player=null;
   document.getElementById('hint').style.display='';
   generate();
 }
@@ -251,10 +253,11 @@ function sampleHeight(x, y) {
          g[(yi+1)*size+xi]*(1-xf)*yf+g[(yi+1)*size+xi+1]*xf*yf;
 }
 
+// Returns true if (x,y) is hikeable — above sea, below snow line (0.92).
+// Called up to 3× per frame; uses module-level `sl` cached by render().
 function isHikeable(x, y) {
-  const sl=parseFloat(document.getElementById('sealevel').value);
   const h=sampleHeight(x,y);
-  return h>=sl && h<0.92;
+  return h>=sl && h<0.92; // 0.92 = where snow/peak biome begins
 }
 
 function drawMountainHiker(x, y) {
@@ -278,8 +281,8 @@ function drawMountainHiker(x, y) {
 }
 
 function playerFrame() {
-  playerRaf=requestAnimationFrame(playerFrame);
-  if (!player||!cachedTerrain) return;
+  requestAnimationFrame(playerFrame);
+  if (!player) return; // terrain always pre-allocated; only gate on player spawn
 
   const speed=2;
   let dx=0, dy=0;
@@ -332,7 +335,7 @@ canvas.addEventListener('click',e=>{
   if (!isHikeable(x,y)) return;
   player={x,y};
   document.getElementById('hint').style.display='none';
-  if (!playerRaf) playerFrame();
+  // RAF loop already running from startup
 });
 
 window.addEventListener('resize',resize);

@@ -66,8 +66,8 @@ let W, H, imageData;
 let grid = null;   // Uint8Array: 1=wall, 0=floor
 let dist  = null;  // Int16Array: BFS distance from nearest wall
 let roomId = null; // Int16Array: flood-fill room labels
-let player = null, cachedTerrain = null, playerRaf = null, fogCanvas = null, fogCtx = null;
-const keys = {};
+let player = null, cachedTerrain = null, fogCanvas = null, fogCtx = null;
+const keys = {}; // tracks which movement keys are currently held
 
 // ── PRNG ─────────────────────────────────────────────────────────────────────
 function hashStr(s) {
@@ -208,7 +208,7 @@ function render() {
     const pi=i*4;data[pi]=R;data[pi+1]=G;data[pi+2]=B;data[pi+3]=255;
   }
   ctx.putImageData(imageData,0,0);
-  cachedTerrain = ctx.getImageData(0,0,W,H);
+  cachedTerrain.data.set(imageData.data); // CPU copy — avoids GPU→CPU readback
 
   // Stats
   let open=0;
@@ -239,14 +239,18 @@ function resize(){
   W=wrap.clientWidth;H=wrap.clientHeight;
   canvas.width=W;canvas.height=H;
   imageData=ctx.createImageData(W,H);
-  fogCanvas=document.createElement('canvas'); fogCanvas.width=W; fogCanvas.height=H;
-  fogCtx=fogCanvas.getContext('2d');
-  grid=null; cachedTerrain=null; player=null;
+  cachedTerrain=ctx.createImageData(W,H); // pre-alloc; filled via .data.set() in render()
+  // Reuse fogCanvas element across resizes — resetting dimensions clears it automatically
+  if (!fogCanvas) { fogCanvas=document.createElement('canvas'); fogCtx=fogCanvas.getContext('2d'); }
+  fogCanvas.width=W; fogCanvas.height=H;
+  grid=null; player=null;
   document.getElementById('hint').style.display='';
   generate();
 }
 
 // ── Player ────────────────────────────────────────────────────────────────────
+// Returns true if (x,y) is open cave floor (not a wall).
+// Called up to 3× per frame during wall-slide collision.
 function isFloor(x, y) {
   if (!grid) return false;
   const xi=Math.max(0,Math.min(W-1,Math.round(x)));
@@ -284,8 +288,8 @@ function drawExplorer(x, y) {
 }
 
 function playerFrame() {
-  playerRaf = requestAnimationFrame(playerFrame);
-  if (!player || !cachedTerrain) return;
+  requestAnimationFrame(playerFrame);
+  if (!player) return; // terrain always pre-allocated; only gate on player spawn
 
   const speed = 2;
   let dx=0, dy=0;
@@ -348,7 +352,7 @@ canvas.addEventListener('click',e=>{
   if (isFloor(x, y)) {
     player = { x, y };
     document.getElementById('hint').style.display='none';
-    if (!playerRaf) playerFrame();
+    // RAF loop already running from startup
   }
 });
 // Right click: carve open space

@@ -132,8 +132,9 @@ function biomeColor(h, sl, style) {
 
 // ── Heightmap ─────────────────────────────────────────────────────────────────
 let cachedHeights = null, cachedKey = null;
-let player = null, playerRaf = null, cachedTerrain = null;
-const keys = {};
+let player = null, cachedTerrain = null;
+let sl = 0.38; // cached sea-level — updated each render() so isWater() avoids per-frame DOM reads
+const keys = {}; // tracks which movement keys are currently held
 
 function hmKey() {
   return [document.getElementById('seed').value, document.getElementById('scale').value,
@@ -174,7 +175,7 @@ function buildHeightmap() {
 
 function render() {
   if (!heights) return;
-  const sl = parseFloat(document.getElementById('sealevel').value);
+  sl = parseFloat(document.getElementById('sealevel').value); // refresh cache
   const style = document.getElementById('style').value;
   const doShade = document.getElementById('hillshade').checked;
   const data = imageData.data;
@@ -198,7 +199,7 @@ function render() {
     }
   }
   ctx.putImageData(imageData,0,0);
-  cachedTerrain = ctx.getImageData(0,0,W,H);
+  cachedTerrain.data.set(imageData.data); // CPU copy — avoids a GPU→CPU readback
   if (player && !isWater(player.x, player.y)) {
     player = null;
     document.getElementById('hint').style.display = '';
@@ -218,17 +219,19 @@ function resize() {
   W=wrap.clientWidth; H=wrap.clientHeight;
   canvas.width=W; canvas.height=H;
   imageData=ctx.createImageData(W,H);
-  cachedHeights=null; cachedTerrain=null; player=null;
+  cachedTerrain=ctx.createImageData(W,H); // pre-alloc; filled via .data.set() in render()
+  cachedHeights=null; player=null;
   document.getElementById('hint').style.display = '';
   generate();
 }
 
 // ── Player ────────────────────────────────────────────────────────────────────
+// Returns true if pixel (x,y) is below sea level. Called up to 3× per frame
+// during wall-slide collision, so uses module-level `sl` cached by render().
 function isWater(x, y) {
   if (!heights) return false;
   const xi = Math.max(0, Math.min(W-1, Math.round(x)));
   const yi = Math.max(0, Math.min(H-1, Math.round(y)));
-  const sl = parseFloat(document.getElementById('sealevel').value);
   return heights[yi*W+xi] < sl;
 }
 
@@ -255,8 +258,8 @@ function drawShip(x, y, angle) {
 }
 
 function playerFrame() {
-  playerRaf = requestAnimationFrame(playerFrame);
-  if (!player || !cachedTerrain) return;
+  requestAnimationFrame(playerFrame);
+  if (!player) return; // terrain is always pre-allocated; only gate on player spawn
 
   const speed = 1.8;
   let dx = 0, dy = 0;
@@ -302,7 +305,7 @@ document.getElementById('style').addEventListener('change', ()=>generate(false))
 document.getElementById('hillshade').addEventListener('change', ()=>generate(false));
 
 // Player controls
-window.addEventListener('keydown', e => { keys[e.key] = true; e.preventDefault && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key) && e.preventDefault(); });
+window.addEventListener('keydown', e => { keys[e.key] = true; if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault(); });
 window.addEventListener('keyup', e => { keys[e.key] = false; });
 
 canvas.addEventListener('click', e => {
@@ -311,7 +314,7 @@ canvas.addEventListener('click', e => {
   if (!isWater(x, y)) return;
   player = { x, y, angle: 0 };
   document.getElementById('hint').style.display = 'none';
-  if (!playerRaf) playerFrame();
+  // RAF loop already running from startup — no need to restart it
 });
 
 window.addEventListener('resize', resize);

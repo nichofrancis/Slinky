@@ -63,8 +63,10 @@ let W, H, imageData;
 // Shared state between build and render
 let heights = null, flowAcc = null, watershed = null;
 let maxFlowCached = 1;
-let player = null, cachedTerrain = null, playerRaf = null;
-const keys = {};
+// sl, rt: cached slider values for isLand() hot path — updated each render()
+let sl = 0.30, rt = 0.025;
+let player = null, cachedTerrain = null;
+const keys = {}; // tracks which movement keys are currently held
 
 // ── Seeded noise ──────────────────────────────────────────────────────────────
 function hashStr(s) {
@@ -209,9 +211,9 @@ function buildAll() {
 
 function render() {
   if (!heights||!flowAcc) return;
-  const sl   = parseFloat(document.getElementById('sealevel').value);
-  const rt   = parseFloat(document.getElementById('riverthresh').value);
-  const rc   = parseFloat(document.getElementById('rivercolor').value);
+  sl = parseFloat(document.getElementById('sealevel').value);   // refresh cache
+  rt = parseFloat(document.getElementById('riverthresh').value); // refresh cache
+  const rc = parseFloat(document.getElementById('rivercolor').value);
   const style= document.getElementById('style').value;
   const doShade=document.getElementById('hillshade').checked;
   const data=imageData.data;
@@ -264,7 +266,7 @@ function render() {
     const pi=i*4; data[pi]=R;data[pi+1]=G;data[pi+2]=B;data[pi+3]=255;
   }
   ctx.putImageData(imageData,0,0);
-  cachedTerrain = ctx.getImageData(0,0,W,H);
+  cachedTerrain.data.set(imageData.data); // CPU copy — avoids GPU→CPU readback
   if (player && !isLand(player.x, player.y)) {
     player = null;
     document.getElementById('hint').style.display = '';
@@ -285,18 +287,19 @@ function resize(){
   W=wrap.clientWidth;H=wrap.clientHeight;
   canvas.width=W;canvas.height=H;
   imageData=ctx.createImageData(W,H);
-  heights=null; cachedKey=null; cachedTerrain=null; player=null;
+  cachedTerrain=ctx.createImageData(W,H); // pre-alloc; filled via .data.set() in render()
+  heights=null; cachedKey=null; player=null;
   document.getElementById('hint').style.display = '';
   generate();
 }
 
 // ── Player ────────────────────────────────────────────────────────────────────
+// Returns true if (x,y) is walkable land — above sea level and below river threshold.
+// Called up to 3× per frame during wall-slide collision; uses sl/rt cached by render().
 function isLand(x, y) {
   if (!heights || !flowAcc) return false;
   const xi = Math.max(0, Math.min(W-1, Math.round(x)));
   const yi = Math.max(0, Math.min(H-1, Math.round(y)));
-  const sl = parseFloat(document.getElementById('sealevel').value);
-  const rt = parseFloat(document.getElementById('riverthresh').value);
   const i = yi*W+xi;
   return heights[i] >= sl && flowAcc[i] <= maxFlowCached * rt;
 }
@@ -323,8 +326,8 @@ function drawHiker(x, y) {
 }
 
 function playerFrame() {
-  playerRaf = requestAnimationFrame(playerFrame);
-  if (!player || !cachedTerrain) return;
+  requestAnimationFrame(playerFrame);
+  if (!player) return; // terrain always pre-allocated; only gate on player spawn
 
   const speed = 2;
   let dx = 0, dy = 0;
@@ -380,7 +383,7 @@ canvas.addEventListener('click', e => {
   if (!isLand(x, y)) return;
   player = { x, y };
   document.getElementById('hint').style.display = 'none';
-  if (!playerRaf) playerFrame();
+  // RAF loop already running from startup
 });
 
 window.addEventListener('resize',resize);
