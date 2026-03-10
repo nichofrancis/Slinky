@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lander Terrain</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --accent: #c084fc; --text: #e2e2f0; --muted: #6b6b8a; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    header { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 1rem; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+    .back { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+    .back:hover { color: var(--text); }
+    h1 { font-size: 1.05rem; font-weight: 700; }
+    .controls { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; flex: 1; }
+    button { background: var(--border); border: 1px solid #2a2a3e; color: var(--text); padding: 0.3rem 0.75rem; border-radius: 6px; cursor: pointer; font-size: 0.82rem; }
+    button:hover { background: var(--accent); border-color: var(--accent); color: #000; }
+    input[type=text] { background: #0d0d18; border: 1px solid #2a2a3e; color: var(--text); padding: 0.3rem 0.6rem; border-radius: 6px; font-size: 0.82rem; width: 110px; }
+    input[type=text]:focus { outline: 1px solid var(--accent); }
+    label { font-size: 0.78rem; color: var(--muted); display: flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
+    input[type=range] { width: 60px; accent-color: var(--accent); }
+    select { background: var(--border); border: 1px solid #2a2a3e; color: var(--text); padding: 0.3rem 0.5rem; border-radius: 6px; font-size: 0.78rem; }
+    .canvas-wrap { flex: 1; overflow: hidden; background: #050508; display: flex; position: relative; }
+    canvas { flex: 1; display: block; }
+    .hud { position: absolute; top: 12px; left: 14px; pointer-events: none; font-size: 0.75rem; color: rgba(200,180,255,0.85); display: none; flex-direction: column; gap: 5px; }
+    .hud-row { display: flex; align-items: center; gap: 6px; }
+    .fuel-bar { width: 72px; height: 5px; background: #222; border-radius: 3px; overflow: hidden; }
+    .fuel-fill { height: 100%; background: var(--accent); border-radius: 3px; }
+    .player-hint { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.6); color: rgba(255,255,255,0.75); font-size: 0.76rem; padding: 0.3rem 0.85rem; border-radius: 5px; pointer-events: none; border: 1px solid rgba(255,255,255,0.1); white-space: nowrap; }
+    .status-msg { position: absolute; top: 46%; left: 50%; transform: translate(-50%,-50%); font-size: 1.9rem; font-weight: 800; pointer-events: none; text-align: center; opacity: 0; transition: opacity 0.25s; letter-spacing: 0.02em; }
+    .status-msg.show { opacity: 1; }
+    footer { padding: 0.35rem 1rem; background: var(--surface); border-top: 1px solid var(--border); font-size: 0.73rem; color: var(--muted); flex-shrink: 0; }
+  </style>
+</head>
+<body>
+<header>
+  <a class="back" href="../index.html">← Back</a>
+  <h1>Lander Terrain</h1>
+  <div class="controls">
+    <input type="text" id="seed" value="moonfall" placeholder="Seed…">
+    <button id="btn-gen">Generate</button>
+    <button id="btn-rnd">⟳ Random</button>
+    <select id="style">
+      <option value="rock">Rock</option>
+      <option value="ice">Ice</option>
+      <option value="volcanic">Volcanic</option>
+      <option value="alien">Alien</option>
+    </select>
+    <label>Roughness <input type="range" id="roughness" min="0.3" max="0.88" step="0.04" value="0.60"><span id="lbl-rough">0.60</span></label>
+    <label>Caves <input type="range" id="cave-density" min="0.1" max="0.9" step="0.05" value="0.50"><span id="lbl-cave">0.50</span></label>
+    <button id="btn-save">↓ Save</button>
+  </div>
+</header>
+<div class="canvas-wrap" id="wrap">
+  <canvas id="canvas"></canvas>
+  <div class="hud" id="hud">
+    <div class="hud-row">Fuel <div class="fuel-bar"><div class="fuel-fill" id="fuel-fill" style="width:100%"></div></div></div>
+    <div class="hud-row" id="spd-row">Speed: 0.0</div>
+  </div>
+  <div class="status-msg" id="status-msg"></div>
+  <div class="player-hint" id="hint">🚀 Click open sky or cave to spawn · ↑ Thrust · ← → Rotate · R Respawn</div>
+</div>
+<footer>Seeded fBm mountains + noise-carved caves · click to spawn lander · ↑ thrust · ← → rotate · R respawn</footer>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+const wrap   = document.getElementById('wrap');
+let W, H, COLS, ROWS;
+const CELL = 4;
+
+// ── Terrain state ─────────────────────────────────────────────────────────────
+let grid = null;      // Uint8Array: 0=air, 1=solid
+let heights = null;   // Int16Array: surface row per column
+let cachedTerrain = null;
+
+// ── PRNG & Noise ──────────────────────────────────────────────────────────────
+function hashStr(s) {
+  let h=2166136261>>>0;
+  for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
+  return h||1;
+}
+function mkRng(seed) {
+  let s=hashStr(String(seed));
+  return ()=>{s^=s<<13;s^=s>>>17;s^=s<<5;return(s>>>0)/0x100000000;};
+}
+function mkNoise(rng) {
+  const perm=Array.from({length:256},(_,i)=>i);
+  for(let i=255;i>0;i--){const j=Math.floor(rng()*(i+1));[perm[i],perm[j]]=[perm[j],perm[i]];}
+  const P=new Uint8Array(512);
+  for(let i=0;i<256;i++) P[i]=P[i+256]=perm[i];
+  function grad(h,x,y){switch(h&7){case 0:return x+y;case 1:return-x+y;case 2:return x-y;case 3:return-x-y;case 4:return x;case 5:return-x;case 6:return y;default:return-y;}}
+  function fade(t){return t*t*t*(t*(t*6-15)+10);}
+  function lerp(a,b,t){return a+t*(b-a);}
+  return (x,y)=>{
+    const xi=Math.floor(x)&255,yi=Math.floor(y)&255;
+    const xf=x-Math.floor(x),yf=y-Math.floor(y);
+    const u=fade(xf),v=fade(yf);
+    const aa=P[P[xi]+yi],ab=P[P[xi]+yi+1],ba=P[P[xi+1]+yi],bb=P[P[xi+1]+yi+1];
+    return lerp(lerp(grad(aa,xf,yf),grad(ba,xf-1,yf),u),lerp(grad(ab,xf,yf-1),grad(bb,xf-1,yf-1),u),v);
+  };
+}
+function fbm(n,x,y,oct,persist){
+  let v=0,a=1,f=1,m=0;
+  for(let i=0;i<oct;i++){v+=n(x*f,y*f)*a;m+=a;f*=2;a*=persist;}
+  return v/m;
+}
+
+// ── Build terrain ─────────────────────────────────────────────────────────────
+function build() {
+  const seed      = document.getElementById('seed').value || 'moonfall';
+  const roughness = +document.getElementById('roughness').value;
+  const caveD     = +document.getElementById('cave-density').value;
+  const rng       = mkRng(seed);
+  const surfN     = mkNoise(rng);
+  const caveN     = mkNoise(rng);
+  const starRng   = mkRng(seed + '☆');
+
+  heights = new Int16Array(COLS);
+  grid    = new Uint8Array(COLS * ROWS);
+
+  // Surface heightmap: fBm → row index
+  const surfScale = 3.2, surfOct = 6;
+  const minH = Math.floor(ROWS * 0.13), maxH = Math.floor(ROWS * 0.50);
+  for (let c = 0; c < COLS; c++) {
+    const n = (fbm(surfN, c / COLS, 0.5, surfOct, roughness) + 1) * 0.5;
+    heights[c] = Math.round(minH + n * (maxH - minH));
+  }
+
+  // Fill: solid below surface
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      grid[r * COLS + c] = r >= heights[c] ? 1 : 0;
+
+  // Carve caves with noise (skipping a margin below surface)
+  const caveScale = 0.082, caveThresh = 0.40 - caveD * 0.48;
+  for (let r = 0; r < ROWS - 2; r++) {
+    for (let c = 2; c < COLS - 2; c++) {
+      if (!grid[r * COLS + c]) continue;
+      if (r < heights[c] + 4) continue; // protect surface layer
+      const cn = fbm(caveN, c * caveScale, r * caveScale * 1.15, 3, 0.5);
+      if (cn > caveThresh) grid[r * COLS + c] = 0;
+    }
+  }
+
+  // Carve 3 shafts from surface down into cave system
+  const shaftRng = mkRng(seed + '|');
+  for (let s = 0; s < 3; s++) {
+    const col = Math.floor(shaftRng() * (COLS - 30) + 15);
+    const surfRow = heights[col];
+    for (let r = surfRow; r < ROWS - 2; r++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const cc = col + dc;
+        if (cc > 0 && cc < COLS - 1) grid[r * COLS + cc] = 0;
+      }
+      // Stop once we connect to an existing cave void
+      if (r > surfRow + 8) {
+        let connected = false;
+        for (let dc = -3; dc <= 3; dc++) {
+          const cc = col + dc;
+          if (cc >= 0 && cc < COLS && r + 3 < ROWS && !grid[(r + 3) * COLS + cc]) { connected = true; break; }
+        }
+        if (connected) break;
+      }
+    }
+  }
+
+  // Bake terrain + stars into cachedTerrain
+  render();
+}
+
+// ── Render to cachedTerrain ImageData ─────────────────────────────────────────
+function render() {
+  if (!grid) return;
+  const style  = document.getElementById('style').value;
+  const seed   = document.getElementById('seed').value || 'moonfall';
+  const starRng = mkRng(seed + '☆');
+  cachedTerrain = ctx.createImageData(W, H);
+  const d = cachedTerrain.data;
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const v     = grid[r * COLS + c];
+      const depth = (r - heights[c]) / Math.max(1, ROWS - heights[c]);
+      let R, G, B;
+
+      if (!v) {
+        if (r < heights[c]) {
+          // Sky — dark gradient
+          const t = r / Math.max(1, heights[c]);
+          R = Math.floor(6  + t * 12); G = Math.floor(5  + t * 8); B = Math.floor(18 + t * 28);
+        } else {
+          // Cave air — near black
+          R = 6; G = 5; B = 10;
+        }
+      } else {
+        const shade = 0.55 + depth * 0.35 + (Math.random() - 0.5) * 0.06;
+        switch (style) {
+          case 'rock': {
+            R = Math.floor(82 * shade); G = Math.floor(74 * shade); B = Math.floor(66 * shade);
+            break;
+          }
+          case 'ice': {
+            R = Math.floor(138 * shade); G = Math.floor(182 * shade); B = Math.floor(210 * shade);
+            break;
+          }
+          case 'volcanic': {
+            R = Math.floor(62 * shade); G = Math.floor(22 * shade); B = Math.floor(16 * shade);
+            if (Math.random() < 0.0022) { R = 210 + Math.floor(Math.random()*45); G = Math.floor(Math.random()*55); B = 0; }
+            break;
+          }
+          case 'alien': {
+            R = Math.floor(50  * shade); G = Math.floor(24  * shade); B = Math.floor(85  * shade);
+            if (Math.random() < 0.003) { R = 0; G = 180 + Math.floor(Math.random()*65); B = 220; }
+            break;
+          }
+        }
+        // Bright surface highlight row
+        if (r === heights[c]) { R = Math.min(255, R + 38); G = Math.min(255, G + 36); B = Math.min(255, B + 34); }
+      }
+
+      for (let dy = 0; dy < CELL; dy++) {
+        for (let dx = 0; dx < CELL; dx++) {
+          const i = ((r * CELL + dy) * W + (c * CELL + dx)) * 4;
+          d[i] = R; d[i+1] = G; d[i+2] = B; d[i+3] = 255;
+        }
+      }
+    }
+  }
+
+  // Bake stars
+  const numStars = Math.floor(COLS * 0.6);
+  for (let i = 0; i < numStars; i++) {
+    const sc = Math.floor(starRng() * COLS);
+    const sr = Math.floor(starRng() * Math.max(1, heights[sc] - 1));
+    if (sr >= 0 && !grid[sr * COLS + sc]) {
+      const br = Math.floor((0.3 + starRng() * 0.7) * 255);
+      const sx = sc * CELL + Math.floor(starRng() * CELL);
+      const sy = sr * CELL + Math.floor(starRng() * CELL);
+      if (sx < W && sy < H) {
+        const idx = (sy * W + sx) * 4;
+        d[idx] = br; d[idx+1] = br; d[idx+2] = br; d[idx+3] = 255;
+      }
+    }
+  }
+}
+
+// ── Physics constants ─────────────────────────────────────────────────────────
+const GRAVITY    = 0.034;
+const THRUST     = 0.14;
+const ROT_SPEED  = 0.056;
+const CRASH_V    = 2.0;
+const LAND_ANGLE = 0.38;
+const FUEL_DRAIN = 0.10;
+const SZ         = 10;   // lander half-height in pixels
+
+// ── Lander state ──────────────────────────────────────────────────────────────
+let player = null;
+const keys = {};
+let statusTimer = 0;
+
+function spawnAt(x, y) {
+  player = { x, y, vx: 0, vy: 0, angle: 0, fuel: 100,
+             alive: true, landed: false, thrusting: false, explode: 0 };
+  document.getElementById('hud').style.display = 'flex';
+  document.getElementById('hint').style.display = 'none';
+  showStatus('');
+}
+
+function getLanderPoints(p) {
+  const cos = Math.cos(p.angle), sin = Math.sin(p.angle);
+  // tip, left-body, right-body, left-foot, right-foot
+  return [
+    [0,        -SZ      ],
+    [-SZ*0.62,  SZ*0.32 ],
+    [ SZ*0.62,  SZ*0.32 ],
+    [-SZ*0.88,  SZ*0.92 ],
+    [ SZ*0.88,  SZ*0.92 ],
+  ].map(([lx, ly]) => [
+    (p.x + lx * cos - ly * sin + W) % W,
+     p.y + lx * sin + ly * cos,
+  ]);
+}
+
+function isSolid(px, py) {
+  const c = Math.floor(px / CELL), r = Math.floor(py / CELL);
+  return c >= 0 && c < COLS && r >= 0 && r < ROWS && grid[r * COLS + c] === 1;
+}
+
+function updatePlayer() {
+  if (!player) return;
+  if (!player.alive) {
+    if (player.explode > 0) player.explode -= 0.025;
+    return;
+  }
+  if (player.landed) {
+    // Allow re-launch
+    const thrusting = (keys['ArrowUp'] || keys['w'] || keys['W']) && player.fuel > 0;
+    if (thrusting) { player.landed = false; showStatus(''); }
+    return;
+  }
+
+  if (keys['ArrowLeft']  || keys['a'] || keys['A']) player.angle -= ROT_SPEED;
+  if (keys['ArrowRight'] || keys['d'] || keys['D']) player.angle += ROT_SPEED;
+
+  const thrusting = (keys['ArrowUp'] || keys['w'] || keys['W']) && player.fuel > 0;
+  if (thrusting) {
+    player.vx += Math.sin(player.angle) * THRUST;
+    player.vy -= Math.cos(player.angle) * THRUST;
+    player.fuel = Math.max(0, player.fuel - FUEL_DRAIN);
+    if (player.fuel === 0 && !player._fuelWarned) {
+      player._fuelWarned = true;
+      showStatus('⚠ OUT OF FUEL');
+      setTimeout(() => showStatus(''), 2000);
+    }
+  }
+  player.thrusting = thrusting;
+
+  player.vy += GRAVITY;
+
+  // Horizontal wrap
+  player.x = (player.x + player.vx + W) % W;
+  player.y += player.vy;
+
+  // Out of bounds top/bottom
+  if (player.y < -SZ * 2) { player.y = -SZ * 2; player.vy = 0; }
+  if (player.y > H + SZ * 4) {
+    player.alive = false; player.explode = 1;
+    snd.crackle(); showStatus('💥 CRASHED  —  R to respawn');
+    scheduleRespawn(); return;
+  }
+
+  const speed = Math.sqrt(player.vx ** 2 + player.vy ** 2);
+  const pts   = getLanderPoints(player);
+
+  for (const [px, py] of pts) {
+    if (isSolid(px, py)) {
+      const canLand = speed <= CRASH_V && Math.abs(player.angle) <= LAND_ANGLE && player.vy >= 0;
+      if (canLand) {
+        player.landed = true; player.vx = 0; player.vy = 0;
+        snd.land(); showStatus('✓ LANDED!');
+        setTimeout(() => showStatus(''), 3000);
+      } else {
+        player.alive = false; player.explode = 1;
+        snd.crackle();
+        showStatus('💥 CRASHED  —  R to respawn');
+        scheduleRespawn();
+      }
+      return;
+    }
+  }
+
+  // HUD
+  document.getElementById('fuel-fill').style.width = player.fuel + '%';
+  document.getElementById('spd-row').textContent = 'Speed: ' + speed.toFixed(1);
+}
+
+function scheduleRespawn() {
+  setTimeout(() => {
+    if (player && !player.alive) {
+      const col = Math.max(0, Math.min(COLS - 1, Math.floor(player.x / CELL)));
+      const sy  = (heights[col] - 10) * CELL;
+      spawnAt(player.x, sy);
+      snd.pop();
+    }
+  }, 2200);
+}
+
+function showStatus(msg) {
+  const el = document.getElementById('status-msg');
+  if (!msg) { el.classList.remove('show'); return; }
+  el.textContent = msg;
+  el.style.color = msg.startsWith('✓') ? '#6bffb8' : msg.startsWith('⚠') ? '#ffd060' : '#ff6b6b';
+  el.classList.add('show');
+  clearTimeout(statusTimer);
+}
+
+// ── Draw lander ───────────────────────────────────────────────────────────────
+function drawLander() {
+  if (!player) return;
+
+  // Explosion ring
+  if (!player.alive && player.explode > 0) {
+    const t  = 1 - player.explode;
+    const ri = t * 38;
+    const grd = ctx.createRadialGradient(player.x, player.y, 0, player.x, player.y, ri);
+    grd.addColorStop(0,   `rgba(255,230, 80, ${player.explode * 0.9})`);
+    grd.addColorStop(0.4, `rgba(255, 90,  0, ${player.explode * 0.6})`);
+    grd.addColorStop(1,   `rgba(200, 20,  0, 0)`);
+    ctx.beginPath(); ctx.arc(player.x, player.y, ri, 0, Math.PI * 2);
+    ctx.fillStyle = grd; ctx.fill();
+    return;
+  }
+  if (!player.alive) return;
+
+  ctx.save();
+  ctx.translate(player.x, player.y);
+  ctx.rotate(player.angle);
+
+  // Main body triangle
+  ctx.beginPath();
+  ctx.moveTo(0, -SZ);
+  ctx.lineTo(-SZ * 0.65, SZ * 0.35);
+  ctx.lineTo( SZ * 0.65, SZ * 0.35);
+  ctx.closePath();
+  ctx.fillStyle = player.landed ? '#6bffb8' : '#d0d8ff';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Cockpit window
+  ctx.beginPath();
+  ctx.arc(0, -SZ * 0.3, SZ * 0.22, 0, Math.PI * 2);
+  ctx.fillStyle = player.landed ? '#003322' : '#1a1a3a';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(160,180,255,0.6)'; ctx.lineWidth = 1; ctx.stroke();
+
+  // Engine nozzle
+  ctx.beginPath();
+  ctx.moveTo(-SZ * 0.28, SZ * 0.35);
+  ctx.lineTo( SZ * 0.28, SZ * 0.35);
+  ctx.lineTo( SZ * 0.18, SZ * 0.62);
+  ctx.lineTo(-SZ * 0.18, SZ * 0.62);
+  ctx.closePath();
+  ctx.fillStyle = '#555868'; ctx.fill();
+
+  // Landing legs
+  ctx.strokeStyle = '#8890aa'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(-SZ * 0.6,  SZ * 0.35); ctx.lineTo(-SZ * 0.90, SZ * 0.95);
+  ctx.moveTo( SZ * 0.6,  SZ * 0.35); ctx.lineTo( SZ * 0.90, SZ * 0.95);
+  ctx.stroke();
+  // Foot pads
+  ctx.strokeStyle = '#6670a0'; ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.moveTo(-SZ * 0.58, SZ * 0.95); ctx.lineTo(-SZ * 1.15, SZ * 0.95);
+  ctx.moveTo( SZ * 0.58, SZ * 0.95); ctx.lineTo( SZ * 1.15, SZ * 0.95);
+  ctx.stroke();
+
+  // Thrust flame
+  if (player.thrusting) {
+    const fl = SZ * (1.1 + Math.random() * 0.9);
+    const ox = (Math.random() - 0.5) * SZ * 0.3;
+    ctx.beginPath();
+    ctx.moveTo(-SZ * 0.18, SZ * 0.62);
+    ctx.quadraticCurveTo(ox, SZ * 0.62 + fl * 0.5, 0, SZ * 0.62 + fl);
+    ctx.quadraticCurveTo(ox, SZ * 0.62 + fl * 0.5, SZ * 0.18, SZ * 0.62);
+    ctx.closePath();
+    const fg = ctx.createLinearGradient(0, SZ * 0.62, 0, SZ * 0.62 + fl);
+    fg.addColorStop(0,   'rgba(255,255,150,0.98)');
+    fg.addColorStop(0.35,'rgba(255,130, 20,0.85)');
+    fg.addColorStop(1,   'rgba(255, 50,  0,0)');
+    ctx.fillStyle = fg; ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+// ── RAF loop ──────────────────────────────────────────────────────────────────
+function frame() {
+  requestAnimationFrame(frame);
+  if (!cachedTerrain) return;
+  updatePlayer();
+  ctx.putImageData(cachedTerrain, 0, 0);
+  drawLander();
+}
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+document.getElementById('btn-gen').addEventListener('click', build);
+document.getElementById('btn-rnd').addEventListener('click', () => {
+  document.getElementById('seed').value = Math.random().toString(36).slice(2, 9);
+  build();
+});
+document.getElementById('btn-save').addEventListener('click', () => {
+  const a = document.createElement('a');
+  a.download = `lander-${document.getElementById('seed').value}.png`;
+  a.href = canvas.toDataURL(); a.click();
+});
+document.getElementById('seed').addEventListener('keydown', e => { if (e.key === 'Enter') build(); });
+document.getElementById('style').addEventListener('change', render);
+document.getElementById('roughness').addEventListener('input', e => {
+  document.getElementById('lbl-rough').textContent = (+e.target.value).toFixed(2); build();
+});
+document.getElementById('cave-density').addEventListener('input', e => {
+  document.getElementById('lbl-cave').textContent = (+e.target.value).toFixed(2); build();
+});
+
+window.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key) && e.preventDefault();
+  if ((e.key === 'r' || e.key === 'R') && player) {
+    const col = Math.max(0, Math.min(COLS - 1, Math.floor(player.x / CELL)));
+    const sy  = (heights ? heights[col] - 10 : ROWS * 0.2) * CELL;
+    spawnAt(player.x, Math.max(10, sy));
+    snd.pop();
+  }
+});
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+canvas.addEventListener('click', e => {
+  if (!grid) return;
+  const rect = canvas.getBoundingClientRect();
+  const px = e.clientX - rect.left, py = e.clientY - rect.top;
+  const c  = Math.floor(px / CELL), r = Math.floor(py / CELL);
+  if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return;
+  if (grid[r * COLS + c] === 0) { spawnAt(px, py); snd.pop(); }
+});
+
+function resize() {
+  W = wrap.clientWidth; H = wrap.clientHeight;
+  canvas.width = W; canvas.height = H;
+  COLS = Math.floor(W / CELL); ROWS = Math.floor(H / CELL);
+  build();
+}
+
+window.addEventListener('resize', resize);
+resize();
+frame();
+
+// ── Sound ─────────────────────────────────────────────────────────────────────
+const snd = (() => {
+  let _ctx;
+  const ac = () => _ctx || (_ctx = new (window.AudioContext||window.webkitAudioContext)());
+  function tone(f0, f1, dur, vol=0.12, type='square') {
+    const c=ac(), o=c.createOscillator(), g=c.createGain();
+    o.connect(g); g.connect(c.destination); o.type=type;
+    o.frequency.setValueAtTime(f0, c.currentTime);
+    if(f1!==f0) o.frequency.exponentialRampToValueAtTime(Math.max(f1,1), c.currentTime+dur);
+    g.gain.setValueAtTime(vol, c.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime+dur);
+    o.start(); o.stop(c.currentTime+dur+0.01);
+  }
+  function noise(dur, cf=1500, vol=0.1) {
+    const c=ac(), n=Math.floor(c.sampleRate*dur), buf=c.createBuffer(1,n,c.sampleRate);
+    const dd=buf.getChannelData(0); for(let i=0;i<n;i++) dd[i]=Math.random()*2-1;
+    const src=c.createBufferSource(), filt=c.createBiquadFilter(), g=c.createGain();
+    src.buffer=buf; filt.type='bandpass'; filt.frequency.value=cf; filt.Q.value=0.8;
+    src.connect(filt); filt.connect(g); g.connect(c.destination);
+    g.gain.setValueAtTime(vol, c.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime+dur);
+    src.start(); src.stop(c.currentTime+dur+0.01);
+  }
+  return {
+    click:   (f=1100) => tone(f, f*0.55, 0.035, 0.09),
+    pop:     () => tone(720, 360, 0.07, 0.13, 'sine'),
+    land:    () => { tone(440, 660, 0.12, 0.12, 'sine'); setTimeout(()=>tone(660,880,0.08,0.08,'sine'),100); },
+    crackle: () => noise(0.14, 2200, 0.18),
+    sweep:   (up=true) => tone(up?180:900, up?900:180, 0.22, 0.10, 'sine'),
+  };
+})();
+document.getElementById('btn-gen').addEventListener('mousedown', () => snd.sweep(true));
+document.getElementById('btn-rnd').addEventListener('mousedown', () => { snd.sweep(true); setTimeout(()=>snd.pop(),140); });
+document.getElementById('btn-save').addEventListener('mousedown', () => snd.click(800));
+</script>
+</body>
+</html>

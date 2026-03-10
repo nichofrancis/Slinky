@@ -257,6 +257,15 @@
       </div>
     </a>
 
+    <a class="card" href="generators/lander.html">
+      <canvas class="card-preview" id="prev-lander"></canvas>
+      <div class="card-body">
+        <span class="card-tag">Physics · Seeded</span>
+        <div class="card-title">Lander Terrain</div>
+        <div class="card-desc">Seeded fBm mountains with noise-carved cave networks. Fly a lunar lander through the terrain — thrust, rotate, land or crash.</div>
+      </div>
+    </a>
+
   </div>
 
   <footer>
@@ -760,6 +769,85 @@
           ctx.putImageData(img,0,0);
         }
         setTimeout(loop,100);
+      }
+      loop();
+    })();
+
+    // ── Lander Terrain preview ────────────────────────────────────────────────
+    (function() {
+      const canvas = document.getElementById('prev-lander');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.offsetWidth, H = canvas.offsetHeight;
+      canvas.width = W; canvas.height = H;
+
+      // Simple mountain silhouette via value noise
+      const pts = [];
+      let seed = 42;
+      const rng = () => { seed ^= seed<<13; seed ^= seed>>>17; seed ^= seed<<5; return (seed>>>0)/0x100000000; };
+      // generate heights
+      const segs = Math.ceil(W / 3) + 2;
+      const raw = Array.from({length: segs}, () => rng());
+      // smooth with fBm-ish blending
+      function terrH(x) {
+        const t = (x / W) * (segs - 1);
+        const i = Math.floor(t), f = t - i;
+        const a = raw[Math.min(i, segs-1)] || 0;
+        const b = raw[Math.min(i+1, segs-1)] || 0;
+        const sm = f*f*(3-2*f);
+        return H * 0.28 + (a * (1-sm) + b * sm) * H * 0.38;
+      }
+
+      // Stars
+      const stars = Array.from({length: 35}, () => ({ x: rng()*W, y: rng()*H*0.4, br: rng() }));
+
+      // Lander state
+      let lx = W*0.25, ly = H*0.15, lvx = 0.55, lvy = 0.18, la = 0;
+
+      function loop() {
+        ctx.fillStyle = '#06060f';
+        ctx.fillRect(0, 0, W, H);
+
+        for (const s of stars) {
+          ctx.fillStyle = `rgba(255,255,255,${0.25 + s.br*0.7})`;
+          ctx.fillRect(s.x, s.y, 1, 1);
+        }
+
+        // Mountain fill
+        ctx.beginPath();
+        ctx.moveTo(0, H);
+        for (let x = 0; x <= W; x += 2) ctx.lineTo(x, terrH(x));
+        ctx.lineTo(W, H);
+        ctx.closePath();
+        ctx.fillStyle = '#3a3530';
+        ctx.fill();
+        // Surface rim
+        ctx.beginPath();
+        for (let x = 0; x <= W; x += 2) x === 0 ? ctx.moveTo(x, terrH(x)) : ctx.lineTo(x, terrH(x));
+        ctx.strokeStyle = '#5c5248'; ctx.lineWidth = 1.2; ctx.stroke();
+
+        // Move lander
+        lx += lvx; ly += lvy; la += 0.022;
+        if (lx < 8 || lx > W - 8) lvx = -lvx;
+        if (ly < 8) lvy = Math.abs(lvy);
+        const th = terrH(lx);
+        if (ly > th - 22) lvy = -Math.abs(lvy) * 0.95;
+
+        // Draw tiny lander
+        const sz = 5;
+        ctx.save();
+        ctx.translate(lx, ly);
+        ctx.rotate(la);
+        ctx.beginPath();
+        ctx.moveTo(0, -sz); ctx.lineTo(-sz*0.7, sz*0.4); ctx.lineTo(sz*0.7, sz*0.4);
+        ctx.closePath();
+        ctx.fillStyle = '#c8d0ff'; ctx.fill();
+        // Flame
+        ctx.beginPath();
+        ctx.moveTo(-sz*0.2, sz*0.4); ctx.lineTo(0, sz*1.5); ctx.lineTo(sz*0.2, sz*0.4);
+        ctx.fillStyle = 'rgba(255,150,30,0.85)'; ctx.fill();
+        ctx.restore();
+
+        requestAnimationFrame(loop);
       }
       loop();
     })();
