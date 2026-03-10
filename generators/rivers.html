@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>River World Generator</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --accent: #00bcd4; --text: #e2e2f0; --muted: #6b6b8a; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    header { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 1rem; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+    .back { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+    .back:hover { color: var(--text); }
+    h1 { font-size: 1.05rem; font-weight: 700; }
+    .controls { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; flex: 1; }
+    button { background: var(--border); border: 1px solid #2a2a3e; color: var(--text); padding: 0.3rem 0.75rem; border-radius: 6px; cursor: pointer; font-size: 0.82rem; }
+    button:hover { background: var(--accent); border-color: var(--accent); color: #000; }
+    input[type=text] { background: #0d0d18; border: 1px solid #2a2a3e; color: var(--text); padding: 0.3rem 0.6rem; border-radius: 6px; font-size: 0.82rem; width: 120px; }
+    input[type=text]:focus { outline: 1px solid var(--accent); }
+    label { font-size: 0.78rem; color: var(--muted); display: flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
+    input[type=range] { width: 65px; accent-color: var(--accent); }
+    select { background: var(--border); border: 1px solid #2a2a3e; color: var(--text); padding: 0.3rem 0.5rem; border-radius: 6px; font-size: 0.78rem; }
+    .canvas-wrap { flex: 1; overflow: hidden; background: #050508; display: flex; }
+    canvas { flex: 1; display: block; }
+    footer { padding: 0.35rem 1rem; background: var(--surface); border-top: 1px solid var(--border); font-size: 0.73rem; color: var(--muted); flex-shrink: 0; }
+  </style>
+</head>
+<body>
+<header>
+  <a class="back" href="../index.html">← Back</a>
+  <h1>River World</h1>
+  <div class="controls">
+    <input type="text" id="seed" value="confluence" placeholder="Seed…">
+    <button id="btn-gen">Generate</button>
+    <button id="btn-rnd">⟳ Random</button>
+    <label>Scale <input type="range" id="scale" min="1" max="6" step="0.1" value="2.8"><span id="lbl-scale">2.8</span></label>
+    <label>Octaves <input type="range" id="octaves" min="2" max="8" value="7"><span id="lbl-octaves">7</span></label>
+    <label>Sea <input type="range" id="sealevel" min="0.1" max="0.6" step="0.01" value="0.30"><span id="lbl-sealevel">0.30</span></label>
+    <label>Rivers <input type="range" id="riverthresh" min="0.005" max="0.12" step="0.001" value="0.025"><span id="lbl-rt">0.025</span></label>
+    <label>River col <input type="range" id="rivercolor" min="0" max="1" step="0.05" value="0.75"><span id="lbl-rc">0.75</span></label>
+    <select id="style">
+      <option value="biome">Biome</option>
+      <option value="atlas">Atlas</option>
+      <option value="watershed">Watersheds</option>
+    </select>
+    <label>Shade <input type="checkbox" id="hillshade" checked></label>
+    <button id="btn-save">↓ Save</button>
+  </div>
+</header>
+<div class="canvas-wrap" id="wrap">
+  <canvas id="canvas"></canvas>
+</div>
+<footer>D8 flow routing · bucket-sort flow accumulation · rivers drawn by drainage area · watershed colouring</footer>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('wrap');
+let W, H, imageData;
+
+// Shared state between build and render
+let heights = null, flowAcc = null, watershed = null;
+
+// ── Seeded noise ──────────────────────────────────────────────────────────────
+function hashStr(s) {
+  let h=2166136261>>>0;
+  for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
+  return h||1;
+}
+function mkRng(seed) {
+  let s=hashStr(String(seed));
+  return ()=>{s^=s<<13;s^=s>>>17;s^=s<<5;return(s>>>0)/0x100000000;};
+}
+function mkNoise(rng) {
+  const perm=Array.from({length:256},(_,i)=>i);
+  for(let i=255;i>0;i--){const j=Math.floor(rng()*(i+1));[perm[i],perm[j]]=[perm[j],perm[i]];}
+  const P=new Uint8Array(512);
+  for(let i=0;i<256;i++)P[i]=P[i+256]=perm[i];
+  function grad(h,x,y){switch(h&7){case 0:return x+y;case 1:return-x+y;case 2:return x-y;case 3:return-x-y;case 4:return x;case 5:return-x;case 6:return y;default:return-y;}}
+  const fade=t=>t*t*t*(t*(t*6-15)+10);
+  const lerp=(a,b,t)=>a+t*(b-a);
+  return (x,y)=>{
+    const xi=Math.floor(x)&255,yi=Math.floor(y)&255;
+    const xf=x-Math.floor(x),yf=y-Math.floor(y);
+    const u=fade(xf),v=fade(yf);
+    const aa=P[P[xi]+yi],ab=P[P[xi]+yi+1],ba=P[P[xi+1]+yi],bb=P[P[xi+1]+yi+1];
+    return lerp(lerp(grad(aa,xf,yf),grad(ba,xf-1,yf),u),lerp(grad(ab,xf,yf-1),grad(bb,xf-1,yf-1),u),v);
+  };
+}
+function fbm(noise,x,y,oct){
+  let v=0,a=0.5,f=1,m=0;
+  for(let i=0;i<oct;i++){v+=noise(x*f,y*f)*a;m+=a;f*=2;a*=0.5;}
+  return v/m;
+}
+
+// ── Colours ───────────────────────────────────────────────────────────────────
+function biomeColor(h, sl) {
+  if (h < sl) {
+    const t=h/sl;
+    return [Math.round(8+t*22),Math.round(22+t*58),Math.round(78+t*82)];
+  }
+  const t=(h-sl)/(1-sl);
+  if (t<0.04) return [212,188,102];
+  if (t<0.22) return [88,162,50];
+  if (t<0.44) return [58,118,34];
+  if (t<0.62) return [78,98,54];
+  if (t<0.78) return [98,90,80];
+  if (t<0.92) return [152,145,138];
+  return [228,226,234];
+}
+function atlasColor(h, sl) {
+  if (h < sl) {
+    const t=h/sl;
+    return [Math.round(70+t*35),Math.round(110+t*55),Math.round(170+t*50)];
+  }
+  const t=(h-sl)/(1-sl);
+  if (t<0.04) return [225,205,135];
+  if (t<0.28) return [185,215,145];
+  if (t<0.52) return [145,185,115];
+  if (t<0.70) return [175,168,145];
+  if (t<0.87) return [195,188,175];
+  return [232,230,237];
+}
+
+// Watershed palette: 12 distinct hues
+const WS_COLORS = [
+  [160,60,220],[60,160,220],[220,80,60],[60,200,120],
+  [220,160,40],[80,60,200],[200,120,80],[40,180,160],
+  [180,60,120],[80,200,60],[60,100,200],[200,60,160]
+];
+
+// ── Build ─────────────────────────────────────────────────────────────────────
+let cachedKey = null;
+
+function buildAll() {
+  const seed  = document.getElementById('seed').value || 'world';
+  const scale = parseFloat(document.getElementById('scale').value);
+  const oct   = parseInt(document.getElementById('octaves').value);
+  const sl    = parseFloat(document.getElementById('sealevel').value);
+  const N = W*H;
+  const rng = mkRng(seed);
+  const noise = mkNoise(rng);
+  const ox=rng()*500, oy=rng()*500;
+
+  // 1. Heightmap
+  heights = new Float32Array(N);
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++) {
+    heights[y*W+x] = Math.max(0,Math.min(1, fbm(noise,ox+x/W*scale,oy+y/H*scale,oct)*0.5+0.5));
+  }
+
+  // 2. D8 flow directions (steepest descent)
+  const dir = new Int32Array(N).fill(-1);
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++) {
+    const i=y*W+x;
+    if (heights[i]<sl) continue;
+    let minH=heights[i], minI=-1;
+    for (let dy=-1;dy<=1;dy++) for (let dx=-1;dx<=1;dx++) {
+      if (!dy&&!dx) continue;
+      const nx=x+dx,ny=y+dy;
+      if (nx<0||nx>=W||ny<0||ny>=H) continue;
+      const j=ny*W+nx;
+      if (heights[j]<minH){minH=heights[j];minI=j;}
+    }
+    dir[i]=minI;
+  }
+
+  // 3. Flow accumulation via bucket sort (O(N))
+  const BUCKETS=1024;
+  const buckets=Array.from({length:BUCKETS},()=>[]);
+  for(let i=0;i<N;i++){
+    const b=Math.min(BUCKETS-1,Math.floor(heights[i]*BUCKETS));
+    buckets[b].push(i);
+  }
+  flowAcc=new Float32Array(N).fill(1);
+  for(let b=BUCKETS-1;b>=0;b--) for(const i of buckets[b]) if(dir[i]>=0) flowAcc[dir[i]]+=flowAcc[i];
+
+  // 4. Watershed labelling: flood from sea pixels, each outlet gets a distinct colour
+  watershed = new Int16Array(N).fill(-1);
+  const queue = [];
+  let label = 0;
+  // Sea outlet = land cell that flows into sea
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++) {
+    const i=y*W+x;
+    if (heights[i]>=sl && dir[i]>=0 && heights[dir[i]]<sl) {
+      if (watershed[i]===-1) { watershed[i]=label++; queue.push(i); }
+    }
+  }
+  // Propagate labels uphill via BFS
+  let qi=0;
+  while(qi<queue.length){
+    const i=queue[qi++];
+    const y=Math.floor(i/W),x=i%W;
+    for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+      if(!dy&&!dx) continue;
+      const nx=x+dx,ny=y+dy;
+      if(nx<0||nx>=W||ny<0||ny>=H) continue;
+      const j=ny*W+nx;
+      if(watershed[j]===-1 && heights[j]>=sl && dir[j]===i){
+        watershed[j]=watershed[i]; queue.push(j);
+      }
+    }
+  }
+}
+
+function render() {
+  if (!heights||!flowAcc) return;
+  const sl   = parseFloat(document.getElementById('sealevel').value);
+  const rt   = parseFloat(document.getElementById('riverthresh').value);
+  const rc   = parseFloat(document.getElementById('rivercolor').value);
+  const style= document.getElementById('style').value;
+  const doShade=document.getElementById('hillshade').checked;
+  const data=imageData.data;
+  const N=W*H;
+  const SC=5, LX=-0.6, LY=-0.5, LZ=1.0, LN=Math.sqrt(0.36+0.25+1);
+
+  // Find max land flow for threshold
+  let maxFlow=0;
+  for(let i=0;i<N;i++) if(heights[i]>=sl) maxFlow=Math.max(maxFlow,flowAcc[i]);
+  const riverMin=maxFlow*rt;
+  const logMax=Math.log(maxFlow+1);
+
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+    const i=y*W+x;
+    const h=heights[i];
+    let R,G,B;
+    if (style==='watershed' && h>=sl && watershed[i]>=0) {
+      const wc=WS_COLORS[watershed[i]%WS_COLORS.length];
+      // Lighten by elevation
+      const el=(h-sl)/(1-sl);
+      R=Math.round(wc[0]*0.4+el*wc[0]*0.6+30*(1-el));
+      G=Math.round(wc[1]*0.4+el*wc[1]*0.6+30*(1-el));
+      B=Math.round(wc[2]*0.4+el*wc[2]*0.6+30*(1-el));
+    } else {
+      [R,G,B]=style==='atlas'?atlasColor(h,sl):biomeColor(h,sl);
+    }
+
+    // Hillshade (land only)
+    if (doShade && h>sl) {
+      const hR=x<W-1?heights[i+1]:h, hL=x>0?heights[i-1]:h;
+      const hD=y<H-1?heights[i+W]:h, hU=y>0?heights[i-W]:h;
+      const gx=(hR-hL)*SC, gy=(hD-hU)*SC;
+      const nm=Math.sqrt(gx*gx+gy*gy+1);
+      const shade=Math.max(0.2,(-gx*LX/LN+-gy*LY/LN+LZ/LN)/nm);
+      R=Math.min(255,Math.round(R*shade));
+      G=Math.min(255,Math.round(G*shade));
+      B=Math.min(255,Math.round(B*shade));
+    }
+
+    // Rivers
+    if (h>=sl && flowAcc[i]>riverMin) {
+      const strength=Math.min(1, Math.log(flowAcc[i]+1)/logMax);
+      const t=Math.pow(strength,0.25)*rc;
+      R=Math.round(R*(1-t)+20*t);
+      G=Math.round(G*(1-t)+90*t);
+      B=Math.round(B*(1-t)+210*t);
+    }
+
+    const pi=i*4; data[pi]=R;data[pi+1]=G;data[pi+2]=B;data[pi+3]=255;
+  }
+  ctx.putImageData(imageData,0,0);
+}
+
+function generate(forceRebuild=true) {
+  const key=[document.getElementById('seed').value,
+             document.getElementById('scale').value,
+             document.getElementById('octaves').value].join('|');
+  if (forceRebuild||!heights||key!==cachedKey){
+    buildAll(); cachedKey=key;
+  }
+  render();
+}
+
+function resize(){
+  W=wrap.clientWidth;H=wrap.clientHeight;
+  canvas.width=W;canvas.height=H;
+  imageData=ctx.createImageData(W,H);
+  heights=null; cachedKey=null;
+  generate();
+}
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+document.getElementById('btn-gen').addEventListener('click',()=>generate(true));
+document.getElementById('btn-rnd').addEventListener('click',()=>{
+  document.getElementById('seed').value=Math.random().toString(36).slice(2,9); generate(true);
+});
+document.getElementById('btn-save').addEventListener('click',()=>{
+  const a=document.createElement('a');
+  a.download=`rivers-${document.getElementById('seed').value}.png`;
+  a.href=canvas.toDataURL(); a.click();
+});
+document.getElementById('seed').addEventListener('keydown',e=>{if(e.key==='Enter')generate(true);});
+document.getElementById('scale').addEventListener('input',e=>{document.getElementById('lbl-scale').textContent=e.target.value;generate(true);});
+document.getElementById('octaves').addEventListener('input',e=>{document.getElementById('lbl-octaves').textContent=e.target.value;generate(true);});
+// These only need re-render, not full rebuild:
+document.getElementById('sealevel').addEventListener('input',e=>{document.getElementById('lbl-sealevel').textContent=e.target.value;render();});
+document.getElementById('riverthresh').addEventListener('input',e=>{document.getElementById('lbl-rt').textContent=e.target.value;render();});
+document.getElementById('rivercolor').addEventListener('input',e=>{document.getElementById('lbl-rc').textContent=e.target.value;render();});
+document.getElementById('style').addEventListener('change',()=>render());
+document.getElementById('hillshade').addEventListener('change',()=>render());
+window.addEventListener('resize',resize);
+resize();
+</script>
+</body>
+</html>

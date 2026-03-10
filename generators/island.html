@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Island Generator</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --accent: #4fc3f7; --text: #e2e2f0; --muted: #6b6b8a; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    header { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 1rem; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+    .back { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+    .back:hover { color: var(--text); }
+    h1 { font-size: 1.05rem; font-weight: 700; }
+    .controls { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; flex: 1; }
+    button { background: var(--border); border: 1px solid #2a2a3e; color: var(--text); padding: 0.3rem 0.75rem; border-radius: 6px; cursor: pointer; font-size: 0.82rem; }
+    button:hover { background: var(--accent); border-color: var(--accent); color: #000; }
+    input[type=text] { background: #0d0d18; border: 1px solid #2a2a3e; color: var(--text); padding: 0.3rem 0.6rem; border-radius: 6px; font-size: 0.82rem; width: 120px; }
+    input[type=text]:focus { outline: 1px solid var(--accent); }
+    label { font-size: 0.78rem; color: var(--muted); display: flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
+    input[type=range] { width: 65px; accent-color: var(--accent); }
+    select { background: var(--border); border: 1px solid #2a2a3e; color: var(--text); padding: 0.3rem 0.5rem; border-radius: 6px; font-size: 0.78rem; }
+    .canvas-wrap { flex: 1; overflow: hidden; background: #050508; display: flex; }
+    canvas { flex: 1; display: block; }
+    footer { padding: 0.35rem 1rem; background: var(--surface); border-top: 1px solid var(--border); font-size: 0.73rem; color: var(--muted); flex-shrink: 0; }
+  </style>
+</head>
+<body>
+<header>
+  <a class="back" href="../index.html">← Back</a>
+  <h1>Island Generator</h1>
+  <div class="controls">
+    <input type="text" id="seed" value="archipelago" placeholder="Seed string…">
+    <button id="btn-gen">Generate</button>
+    <button id="btn-rnd">⟳ Random</button>
+    <select id="shape">
+      <option value="island">Island</option>
+      <option value="archipelago">Archipelago</option>
+      <option value="continent">Continent</option>
+      <option value="atoll">Atoll</option>
+    </select>
+    <label>Scale <input type="range" id="scale" min="1" max="8" step="0.1" value="3.5"><span id="lbl-scale">3.5</span></label>
+    <label>Octaves <input type="range" id="octaves" min="1" max="8" value="6"><span id="lbl-octaves">6</span></label>
+    <label>Sea <input type="range" id="sealevel" min="0.15" max="0.65" step="0.01" value="0.38"><span id="lbl-sealevel">0.38</span></label>
+    <select id="style">
+      <option value="biome">Biome</option>
+      <option value="atlas">Atlas</option>
+      <option value="topo">Topographic</option>
+      <option value="height">Heightmap</option>
+    </select>
+    <label>Shade <input type="checkbox" id="hillshade" checked></label>
+    <button id="btn-save">↓ Save</button>
+  </div>
+</header>
+<div class="canvas-wrap" id="wrap">
+  <canvas id="canvas"></canvas>
+</div>
+<footer>Seeded Perlin fBm · island / archipelago / atoll shapes · Enter to regenerate · sea level and style re-render instantly</footer>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('wrap');
+let W, H, imageData, heights;
+
+// ── Seeded noise ──────────────────────────────────────────────────────────────
+function hashStr(s) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h || 1;
+}
+function mkRng(seed) {
+  let s = hashStr(String(seed));
+  return () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return (s >>> 0) / 0x100000000; };
+}
+function mkNoise(rng) {
+  const perm = Array.from({length:256},(_,i)=>i);
+  for (let i=255;i>0;i--) { const j=Math.floor(rng()*(i+1)); [perm[i],perm[j]]=[perm[j],perm[i]]; }
+  const P = new Uint8Array(512);
+  for (let i=0;i<256;i++) P[i]=P[i+256]=perm[i];
+  function grad(h,x,y){switch(h&7){case 0:return x+y;case 1:return -x+y;case 2:return x-y;case 3:return -x-y;case 4:return x;case 5:return -x;case 6:return y;default:return -y;}}
+  function fade(t){return t*t*t*(t*(t*6-15)+10);}
+  function lerp(a,b,t){return a+t*(b-a);}
+  return (x,y) => {
+    const xi=Math.floor(x)&255, yi=Math.floor(y)&255;
+    const xf=x-Math.floor(x), yf=y-Math.floor(y);
+    const u=fade(xf), v=fade(yf);
+    const aa=P[P[xi]+yi], ab=P[P[xi]+yi+1], ba=P[P[xi+1]+yi], bb=P[P[xi+1]+yi+1];
+    return lerp(lerp(grad(aa,xf,yf),grad(ba,xf-1,yf),u),lerp(grad(ab,xf,yf-1),grad(bb,xf-1,yf-1),u),v);
+  };
+}
+function fbm(noise,x,y,oct){
+  let v=0,a=0.5,f=1,m=0;
+  for(let i=0;i<oct;i++){v+=noise(x*f,y*f)*a;m+=a;f*=2;a*=0.5;}
+  return v/m;
+}
+
+// ── Colour ────────────────────────────────────────────────────────────────────
+function biomeColor(h, sl, style) {
+  if (style === 'height') { const v=Math.round(h*255); return [v,v,v]; }
+  if (style === 'topo') {
+    const bands = 32, t = h * bands;
+    if ((t%1) < 0.08) return [20,20,20];
+    if (h < sl) return [Math.round(20+h/sl*30), Math.round(50+h/sl*60), Math.round(90+h/sl*80)];
+    const v = Math.round(h*200);
+    return [Math.round(v*0.55+40), Math.round(v*0.85+20), Math.round(v*0.38)];
+  }
+  if (h < sl) {
+    const t = h/sl;
+    if (style==='atlas') return [Math.round(70+t*35),Math.round(110+t*55),Math.round(170+t*50)];
+    return [Math.round(8+t*22),Math.round(22+t*58),Math.round(78+t*82)];
+  }
+  const t = (h-sl)/(1-sl);
+  if (style==='atlas') {
+    if (t<0.04) return [225,205,135];
+    if (t<0.28) return [185,215,145];
+    if (t<0.52) return [145,185,115];
+    if (t<0.70) return [175,168,145];
+    if (t<0.87) return [195,188,175];
+    return [232,230,237];
+  }
+  if (t<0.04) return [212,188,102];
+  if (t<0.22) return [88,162,50];
+  if (t<0.44) return [58,118,34];
+  if (t<0.62) return [78,98,54];
+  if (t<0.78) return [98,90,80];
+  if (t<0.92) return [152,145,138];
+  return [228,226,234];
+}
+
+// ── Heightmap ─────────────────────────────────────────────────────────────────
+let cachedHeights = null, cachedKey = null;
+
+function hmKey() {
+  return [document.getElementById('seed').value, document.getElementById('scale').value,
+          document.getElementById('octaves').value, document.getElementById('shape').value].join('|');
+}
+
+function buildHeightmap() {
+  const seed  = document.getElementById('seed').value || 'world';
+  const scale = parseFloat(document.getElementById('scale').value);
+  const oct   = parseInt(document.getElementById('octaves').value);
+  const shape = document.getElementById('shape').value;
+  const rng   = mkRng(seed);
+  const noise = mkNoise(rng);
+  const ox = rng()*500, oy = rng()*500;
+  const h = new Float32Array(W*H);
+  for (let y=0;y<H;y++) {
+    for (let x=0;x<W;x++) {
+      const nx=x/W, ny=y/H;
+      let v = fbm(noise, ox+nx*scale, oy+ny*scale, oct)*0.5+0.5;
+      const dx=nx*2-1, dy=ny*2-1, d=Math.sqrt(dx*dx+dy*dy);
+      if (shape==='island') {
+        v *= Math.pow(Math.max(0, 1-d*1.3), 1.2);
+      } else if (shape==='archipelago') {
+        const rng2 = mkRng(seed+'_mask');
+        const n2 = mkNoise(rng2);
+        const mask = fbm(n2, ox*0.5+nx*2, oy*0.5+ny*2, 3)*0.5+0.5;
+        v = v * mask * Math.max(0, 1-d*0.75);
+      } else if (shape==='atoll') {
+        const ring = 1 - Math.abs(d-0.52)*3.2;
+        v = v*0.25 + Math.max(0,ring)*0.75;
+      }
+      // continent: no falloff
+      h[y*W+x] = Math.max(0, Math.min(1, v));
+    }
+  }
+  return h;
+}
+
+function render() {
+  if (!heights) return;
+  const sl = parseFloat(document.getElementById('sealevel').value);
+  const style = document.getElementById('style').value;
+  const doShade = document.getElementById('hillshade').checked;
+  const data = imageData.data;
+  const SC=6, LX=-0.6, LY=-0.5, LZ=1.0, LN=Math.sqrt(0.36+0.25+1);
+  for (let y=0;y<H;y++) {
+    for (let x=0;x<W;x++) {
+      const i=y*W+x;
+      const h=heights[i];
+      let [R,G,B] = biomeColor(h, sl, style);
+      if (doShade && h>sl) {
+        const hR=x<W-1?heights[i+1]:h, hL=x>0?heights[i-1]:h;
+        const hD=y<H-1?heights[i+W]:h, hU=y>0?heights[i-W]:h;
+        const gx=(hR-hL)*SC, gy=(hD-hU)*SC;
+        const nm=Math.sqrt(gx*gx+gy*gy+1);
+        const shade=Math.max(0.2,(-gx*LX/LN+-gy*LY/LN+LZ/LN)/nm);
+        R=Math.min(255,Math.round(R*shade));
+        G=Math.min(255,Math.round(G*shade));
+        B=Math.min(255,Math.round(B*shade));
+      }
+      const pi=i*4; data[pi]=R;data[pi+1]=G;data[pi+2]=B;data[pi+3]=255;
+    }
+  }
+  ctx.putImageData(imageData,0,0);
+}
+
+function generate(forceRebuild=true) {
+  const key = hmKey();
+  if (forceRebuild || !cachedHeights || key!==cachedKey) {
+    cachedHeights = buildHeightmap(); cachedKey = key;
+  }
+  heights = cachedHeights;
+  render();
+}
+
+function resize() {
+  W=wrap.clientWidth; H=wrap.clientHeight;
+  canvas.width=W; canvas.height=H;
+  imageData=ctx.createImageData(W,H);
+  cachedHeights=null;
+  generate();
+}
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+document.getElementById('btn-gen').addEventListener('click', ()=>generate(true));
+document.getElementById('btn-rnd').addEventListener('click', ()=>{
+  document.getElementById('seed').value=Math.random().toString(36).slice(2,9); generate(true);
+});
+document.getElementById('btn-save').addEventListener('click', ()=>{
+  const a=document.createElement('a'); a.download=`island-${document.getElementById('seed').value}.png`;
+  a.href=canvas.toDataURL(); a.click();
+});
+document.getElementById('seed').addEventListener('keydown', e=>{ if(e.key==='Enter') generate(true); });
+document.getElementById('shape').addEventListener('change', ()=>generate(true));
+document.getElementById('scale').addEventListener('input', e=>{document.getElementById('lbl-scale').textContent=e.target.value; generate(true);});
+document.getElementById('octaves').addEventListener('input', e=>{document.getElementById('lbl-octaves').textContent=e.target.value; generate(true);});
+document.getElementById('sealevel').addEventListener('input', e=>{document.getElementById('lbl-sealevel').textContent=e.target.value; generate(false);});
+document.getElementById('style').addEventListener('change', ()=>generate(false));
+document.getElementById('hillshade').addEventListener('change', ()=>generate(false));
+window.addEventListener('resize', resize);
+resize();
+</script>
+</body>
+</html>

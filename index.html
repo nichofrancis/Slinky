@@ -49,6 +49,21 @@
       line-height: 1.6;
     }
 
+    .section-label {
+      max-width: 1100px;
+      margin: 0 auto 1rem;
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      padding: 0 0.1rem;
+    }
+
+    .section-label + .grid {
+      margin-bottom: 2.5rem;
+    }
+
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -126,6 +141,7 @@
     <p>Complex behaviour arising from simple rules. Click any simulator to explore.</p>
   </header>
 
+  <div class="section-label">Emergent Simulators</div>
   <div class="grid">
 
     <a class="card" href="simulators/life.html">
@@ -202,8 +218,49 @@
 
   </div>
 
+  <div class="section-label">Terrain Generators</div>
+  <div class="grid">
+
+    <a class="card" href="generators/island.html">
+      <canvas class="card-preview" id="prev-island"></canvas>
+      <div class="card-body">
+        <span class="card-tag">Noise · Biomes</span>
+        <div class="card-title">Island Generator</div>
+        <div class="card-desc">Seeded Perlin fBm with island, archipelago, continent and atoll shapes. Biome colouring + hillshading.</div>
+      </div>
+    </a>
+
+    <a class="card" href="generators/rivers.html">
+      <canvas class="card-preview" id="prev-rivers"></canvas>
+      <div class="card-body">
+        <span class="card-tag">Flow Routing</span>
+        <div class="card-title">River World</div>
+        <div class="card-desc">D8 flow routing with bucket-sort accumulation carves rivers into any heightmap. Watershed colouring reveals drainage basins.</div>
+      </div>
+    </a>
+
+    <a class="card" href="generators/caves.html">
+      <canvas class="card-preview" id="prev-caves"></canvas>
+      <div class="card-body">
+        <span class="card-tag">Cellular Automata</span>
+        <div class="card-title">Cave Generator</div>
+        <div class="card-desc">B5/S4 cellular automaton produces organic cave networks. Step through iterations and click to carve space.</div>
+      </div>
+    </a>
+
+    <a class="card" href="generators/fractal.html">
+      <canvas class="card-preview" id="prev-fractal"></canvas>
+      <div class="card-body">
+        <span class="card-tag">Midpoint Displacement</span>
+        <div class="card-title">Fractal Mountains</div>
+        <div class="card-desc">Diamond-square algorithm with tunable roughness (persistence). Optional thermal erosion pass for smoother ridges.</div>
+      </div>
+    </a>
+
+  </div>
+
   <footer>
-    Each simulation runs entirely in your browser — no server required.
+    Each simulation and generator runs entirely in your browser — no server required.
   </footer>
 
   <script>
@@ -518,6 +575,192 @@
         }
       }
       function loop() { step(); draw(); setTimeout(loop, 30); }
+      loop();
+    })();
+
+    // ── Island preview ────────────────────────────────────────────────────────
+    (function() {
+      const canvas = document.getElementById('prev-island');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.offsetWidth, H = canvas.offsetHeight;
+      canvas.width = W; canvas.height = H;
+      // Quick value-noise island preview
+      const S = 80;
+      function h(x,y,t){
+        let v=0,a=0.5,f=1;
+        for(let i=0;i<4;i++){
+          const px=x*f+t*0.1, py=y*f;
+          v+=Math.sin(px*6.28)*Math.cos(py*6.28)*a; a*=0.5; f*=2;
+        }
+        v=v*0.5+0.5;
+        const dx=x-0.5,dy=y-0.5,d=Math.sqrt(dx*dx+dy*dy);
+        v*=Math.max(0,1-d*2.4);
+        return v;
+      }
+      let t=0;
+      function loop(){
+        t+=0.003;
+        const img=ctx.createImageData(W,H);
+        for(let py=0;py<H;py++) for(let px=0;px<W;px++){
+          const hv=h(px/W,py/H,t);
+          let R,G,B;
+          if(hv<0.32){const d=hv/0.32;R=Math.round(8+d*22);G=Math.round(22+d*58);B=Math.round(78+d*82);}
+          else if(hv<0.36){R=212;G=188;B=102;}
+          else if(hv<0.55){R=88;G=162;B=50;}
+          else if(hv<0.70){R=58;G=118;B=34;}
+          else {R=152;G=145;B=138;}
+          const i=(py*W+px)*4;img.data[i]=R;img.data[i+1]=G;img.data[i+2]=B;img.data[i+3]=255;
+        }
+        ctx.putImageData(img,0,0);
+        setTimeout(loop,80);
+      }
+      loop();
+    })();
+
+    // ── Rivers preview ────────────────────────────────────────────────────────
+    (function() {
+      const canvas = document.getElementById('prev-rivers');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.offsetWidth, H = canvas.offsetHeight;
+      canvas.width = W; canvas.height = H;
+      // Animate a river "flowing" via sinuous path
+      let t=0;
+      function noise1d(x){return Math.sin(x*2.1)*0.5+Math.sin(x*3.7)*0.3+Math.sin(x*7.3)*0.2;}
+      function drawRiver(ctx,W,H,t,alpha,width,y0,freq){
+        ctx.beginPath();
+        ctx.lineWidth=width;
+        ctx.strokeStyle=`rgba(30,90,210,${alpha})`;
+        for(let px=0;px<W;px++){
+          const ry=y0*H+noise1d(px/W*freq+t)*30;
+          px===0?ctx.moveTo(px,ry):ctx.lineTo(px,ry);
+        }
+        ctx.stroke();
+      }
+      function loop(){
+        t+=0.012;
+        ctx.fillStyle='#0d1a0d';
+        ctx.fillRect(0,0,W,H);
+        // terrain stripes
+        for(let i=0;i<6;i++){
+          const y=i/5;
+          const g=ctx.createLinearGradient(0,(y-0.05)*H,0,(y+0.05)*H);
+          const cols=['#1a420a','#2a5a12','#1e4a0c','#3a6a1a','#4a7a22','#58952c'];
+          g.addColorStop(0,cols[i]); g.addColorStop(1,cols[(i+1)%6]);
+          ctx.fillStyle=g;
+          ctx.fillRect(0,(y-0.05)*H,W,H*0.22);
+        }
+        drawRiver(ctx,W,H,t,0.9,3,0.25,4);
+        drawRiver(ctx,W,H,t+1,0.85,2,0.5,5);
+        drawRiver(ctx,W,H,t*0.7,0.9,4,0.75,3);
+        setTimeout(loop,40);
+      }
+      loop();
+    })();
+
+    // ── Caves preview ─────────────────────────────────────────────────────────
+    (function() {
+      const canvas = document.getElementById('prev-caves');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.offsetWidth, H = canvas.offsetHeight;
+      canvas.width = W; canvas.height = H;
+      const CELL=6, COLS=Math.floor(W/CELL), ROWS=Math.floor(H/CELL);
+      let grid=Array.from({length:ROWS},(_,r)=>Array.from({length:COLS},(_,c)=>
+        (r===0||r===ROWS-1||c===0||c===COLS-1)?1:Math.random()<0.46?1:0));
+      function step(){
+        return grid.map((row,r)=>row.map((cell,c)=>{
+          if(r===0||r===ROWS-1||c===0||c===COLS-1) return 1;
+          let w=0;
+          for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
+            if(!dr&&!dc) continue;
+            const nr=r+dr,nc=c+dc;
+            if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&grid[nr][nc]) w++;
+          }
+          return cell?(w>=4?1:0):(w>=5?1:0);
+        }));
+      }
+      // Warm up
+      for(let i=0;i<5;i++) grid=step();
+      let iter=0;
+      function loop(){
+        iter++;
+        if(iter%120===0){
+          grid=Array.from({length:ROWS},(_,r)=>Array.from({length:COLS},(_,c)=>
+            (r===0||r===ROWS-1||c===0||c===COLS-1)?1:Math.random()<0.46?1:0));
+          for(let i=0;i<5;i++) grid=step();
+        }
+        ctx.fillStyle='#0d0d16'; ctx.fillRect(0,0,W,H);
+        for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
+          ctx.fillStyle=grid[r][c]?'#2a2520':'#7a6a50';
+          ctx.fillRect(c*CELL,r*CELL,CELL-1,CELL-1);
+        }
+        setTimeout(loop,80);
+      }
+      loop();
+    })();
+
+    // ── Fractal preview ───────────────────────────────────────────────────────
+    (function() {
+      const canvas = document.getElementById('prev-fractal');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.offsetWidth, H = canvas.offsetHeight;
+      canvas.width = W; canvas.height = H;
+      // Mini diamond-square at n=5 (33x33)
+      function dsMini(seed){
+        const n=5, size=(1<<n)+1;
+        let s=seed>>>0||1;
+        const rng=()=>{s^=s<<13;s^=s>>>17;s^=s<<5;return(s>>>0)/0x100000000;};
+        const g=new Float32Array(size*size);
+        const get=(x,y)=>g[y*size+x];
+        const set=(x,y,v)=>{g[y*size+x]=v;};
+        set(0,0,rng()*2-1);set(n,0,rng()*2-1);set(0,n,rng()*2-1);set(n,n,rng()*2-1);
+        let step=n,scale=1;
+        while(step>1){
+          const h=step>>1;
+          for(let y=0;y<n;y+=step) for(let x=0;x<n;x+=step){
+            const avg=(get(x,y)+get(x+step,y)+get(x,y+step)+get(x+step,y+step))/4;
+            set(x+h,y+h,avg+(rng()*2-1)*scale);
+          }
+          for(let y=0;y<=n;y+=h) for(let x=(y+h)%step;x<=n;x+=step){
+            let sum=0,cnt=0;
+            if(x-h>=0){sum+=get(x-h,y);cnt++;}if(x+h<=n){sum+=get(x+h,y);cnt++;}
+            if(y-h>=0){sum+=get(x,y-h);cnt++;}if(y+h<=n){sum+=get(x,y+h);cnt++;}
+            set(x,y,sum/cnt+(rng()*2-1)*scale);
+          }
+          step=h; scale*=0.58;
+        }
+        let mn=Infinity,mx=-Infinity;
+        for(const v of g){mn=Math.min(mn,v);mx=Math.max(mx,v);}
+        const range=mx-mn||1;
+        for(let i=0;i<g.length;i++) g[i]=(g[i]-mn)/range;
+        return {g,size};
+      }
+      let tick=0;
+      function loop(){
+        tick++;
+        if(tick%200===0||tick===1){
+          const {g,size}=dsMini(Math.floor(Math.random()*0x100000));
+          const img=ctx.createImageData(W,H);
+          const sl=0.3;
+          for(let py=0;py<H;py++) for(let px=0;px<W;px++){
+            const gx=(px/W)*(size-1),gy=(py/H)*(size-1);
+            const xi=Math.min(Math.floor(gx),size-2),yi=Math.min(Math.floor(gy),size-2);
+            const xf=gx-xi,yf=gy-yi;
+            const h=g[yi*size+xi]*(1-xf)*(1-yf)+g[yi*size+xi+1]*xf*(1-yf)+
+                    g[(yi+1)*size+xi]*(1-xf)*yf+g[(yi+1)*size+xi+1]*xf*yf;
+            let R,G,B;
+            if(h<sl){const t=h/sl;R=Math.round(8+t*22);G=Math.round(22+t*58);B=Math.round(78+t*82);}
+            else{const t=(h-sl)/(1-sl);
+              if(t<0.04){R=212;G=188;B=102;}
+              else if(t<0.4){R=88-t*30|0;G=162-t*44|0;B=50;}
+              else if(t<0.75){R=98;G=90;B=80;}
+              else{R=220;G=218;B=225;}
+            }
+            const i=(py*W+px)*4;img.data[i]=R;img.data[i+1]=G;img.data[i+2]=B;img.data[i+3]=255;
+          }
+          ctx.putImageData(img,0,0);
+        }
+        setTimeout(loop,100);
+      }
       loop();
     })();
 

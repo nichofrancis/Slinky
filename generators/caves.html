@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cave Generator</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --accent: #ff9800; --text: #e2e2f0; --muted: #6b6b8a; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    header { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 1rem; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+    .back { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+    .back:hover { color: var(--text); }
+    h1 { font-size: 1.05rem; font-weight: 700; }
+    .controls { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; flex: 1; }
+    button { background: var(--border); border: 1px solid #2a2a3e; color: var(--text); padding: 0.3rem 0.75rem; border-radius: 6px; cursor: pointer; font-size: 0.82rem; }
+    button:hover { background: var(--accent); border-color: var(--accent); color: #000; }
+    input[type=text] { background: #0d0d18; border: 1px solid #2a2a3e; color: var(--text); padding: 0.3rem 0.6rem; border-radius: 6px; font-size: 0.82rem; width: 120px; }
+    input[type=text]:focus { outline: 1px solid var(--accent); }
+    label { font-size: 0.78rem; color: var(--muted); display: flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
+    input[type=range] { width: 60px; accent-color: var(--accent); }
+    select { background: var(--border); border: 1px solid #2a2a3e; color: var(--text); padding: 0.3rem 0.5rem; border-radius: 6px; font-size: 0.78rem; }
+    .canvas-wrap { flex: 1; overflow: hidden; background: #050508; display: flex; }
+    canvas { flex: 1; display: block; image-rendering: auto; }
+    .stat { font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
+    footer { padding: 0.35rem 1rem; background: var(--surface); border-top: 1px solid var(--border); font-size: 0.73rem; color: var(--muted); flex-shrink: 0; }
+  </style>
+</head>
+<body>
+<header>
+  <a class="back" href="../index.html">← Back</a>
+  <h1>Cave Generator</h1>
+  <div class="controls">
+    <input type="text" id="seed" value="underworld" placeholder="Seed…">
+    <button id="btn-gen">Generate</button>
+    <button id="btn-rnd">⟳ Random</button>
+    <button id="btn-step">Step</button>
+    <label>Fill % <input type="range" id="fill" min="30" max="65" value="45"><span id="lbl-fill">45</span></label>
+    <label>Birth <input type="range" id="birth" min="3" max="8" value="5"><span id="lbl-birth">5</span></label>
+    <label>Survive <input type="range" id="survive" min="2" max="7" value="4"><span id="lbl-survive">4</span></label>
+    <label>Iters <input type="range" id="iters" min="0" max="10" value="5"><span id="lbl-iters">5</span></label>
+    <select id="style">
+      <option value="stone">Stone</option>
+      <option value="magma">Magma</option>
+      <option value="ice">Ice</option>
+      <option value="moss">Moss</option>
+    </select>
+    <label>Ambient <input type="checkbox" id="ambient" checked></label>
+    <label>Rooms <input type="checkbox" id="rooms"></label>
+    <span class="stat" id="stat">— % open</span>
+    <button id="btn-save">↓ Save</button>
+  </div>
+</header>
+<div class="canvas-wrap" id="wrap">
+  <canvas id="canvas"></canvas>
+</div>
+<footer>Cellular automata cave · Birth/survive rules · ambient occlusion from BFS distance field · Click to add open space</footer>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('wrap');
+let W, H, imageData;
+let grid = null;   // Uint8Array: 1=wall, 0=floor
+let dist  = null;  // Int16Array: BFS distance from nearest wall
+let roomId = null; // Int16Array: flood-fill room labels
+
+// ── PRNG ─────────────────────────────────────────────────────────────────────
+function hashStr(s) {
+  let h=2166136261>>>0;
+  for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
+  return h||1;
+}
+function mkRng(seed) {
+  let s=hashStr(String(seed));
+  return ()=>{s^=s<<13;s^=s>>>17;s^=s<<5;return(s>>>0)/0x100000000;};
+}
+
+// ── CA ────────────────────────────────────────────────────────────────────────
+function initGrid(rng, fillPct) {
+  const g = new Uint8Array(W*H);
+  for (let i=0;i<W*H;i++) g[i] = rng()<fillPct/100 ? 1 : 0;
+  // Force solid border
+  for (let x=0;x<W;x++){g[x]=1;g[(H-1)*W+x]=1;}
+  for (let y=0;y<H;y++){g[y*W]=1;g[y*W+W-1]=1;}
+  return g;
+}
+
+function stepCA(g, birth, survive) {
+  const next = new Uint8Array(g);
+  for (let y=1;y<H-1;y++) for (let x=1;x<W-1;x++) {
+    let walls=0;
+    for (let dy=-1;dy<=1;dy++) for (let dx=-1;dx<=1;dx++)
+      if (dy||dx) walls+=g[(y+dy)*W+(x+dx)];
+    const i=y*W+x;
+    next[i] = g[i] ? (walls>=survive?1:0) : (walls>=birth?1:0);
+  }
+  return next;
+}
+
+// BFS distance field from walls
+function bfsDistance(g) {
+  const d = new Int16Array(W*H).fill(9999);
+  const q = [];
+  for (let i=0;i<W*H;i++) if(g[i]){d[i]=0;q.push(i);}
+  let qi=0;
+  while(qi<q.length){
+    const i=q[qi++], y=Math.floor(i/W), x=i%W;
+    for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+      if(!dy&&!dx) continue;
+      const nx=x+dx,ny=y+dy;
+      if(nx<0||nx>=W||ny<0||ny>=H) continue;
+      const j=ny*W+nx;
+      const nd=d[i]+1;
+      if(nd<d[j]){d[j]=nd;q.push(j);}
+    }
+  }
+  return d;
+}
+
+// Flood-fill room labelling (floors only)
+function labelRooms(g) {
+  const labels = new Int16Array(W*H).fill(-1);
+  let id=0;
+  for (let i=0;i<W*H;i++){
+    if(g[i]||labels[i]>=0) continue;
+    const q=[i]; labels[i]=id;
+    let qi=0;
+    while(qi<q.length){
+      const ci=q[qi++], cy=Math.floor(ci/W), cx=ci%W;
+      for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+        if(Math.abs(dy)+Math.abs(dx)!==1) continue;
+        const nx=cx+dx,ny=cy+dy;
+        if(nx<0||nx>=W||ny<0||ny>=H) continue;
+        const j=ny*W+nx;
+        if(!g[j]&&labels[j]<0){labels[j]=id;q.push(j);}
+      }
+    }
+    id++;
+  }
+  return labels;
+}
+
+// Distinct hues for room labelling
+function roomColor(id) {
+  const h=(id*137.508)%360;
+  // HSL(h,55%,35%) → rough RGB
+  const s=0.55, l=0.35;
+  const c=(1-Math.abs(2*l-1))*s, x=c*(1-Math.abs((h/60)%2-1)), m=l-c/2;
+  let r,g,b;
+  if(h<60){r=c;g=x;b=0;}else if(h<120){r=x;g=c;b=0;}
+  else if(h<180){r=0;g=c;b=x;}else if(h<240){r=0;g=x;b=c;}
+  else if(h<300){r=x;g=0;b=c;}else{r=c;g=0;b=x;}
+  return [Math.round((r+m)*255),Math.round((g+m)*255),Math.round((b+m)*255)];
+}
+
+// ── Style palettes ────────────────────────────────────────────────────────────
+const PALETTES = {
+  stone: { wall:[45,40,38], floor:[110,105,100], ambient:true },
+  magma: { wall:[20,8,5],   floor:[180,60,20],   ambient:true },
+  ice:   { wall:[30,50,80], floor:[160,200,230],  ambient:true },
+  moss:  { wall:[20,30,15], floor:[80,130,60],    ambient:true }
+};
+
+function floorColor(style, ambientFactor) {
+  const p=PALETTES[style];
+  const f=p.floor, a=ambientFactor;
+  return [Math.round(f[0]*a),Math.round(f[1]*a),Math.round(f[2]*a)];
+}
+function wallColor(style, ambientFactor) {
+  const p=PALETTES[style];
+  const w=p.wall, a=ambientFactor;
+  return [Math.round(w[0]*a),Math.round(w[1]*a),Math.round(w[2]*a)];
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render() {
+  if (!grid) return;
+  const style   = document.getElementById('style').value;
+  const doAmbient= document.getElementById('ambient').checked;
+  const doRooms = document.getElementById('rooms').checked;
+  const data=imageData.data;
+  let maxDist=0;
+  if(doAmbient && dist) for(let i=0;i<dist.length;i++) if(dist[i]<9999) maxDist=Math.max(maxDist,dist[i]);
+  const ambScale = doAmbient ? Math.max(1, maxDist) : 1;
+
+  for(let i=0;i<W*H;i++){
+    let R,G,B;
+    if(grid[i]){
+      // Wall
+      const ambient=doAmbient ? Math.min(1, dist[i]/ambScale*3+0.1) : 1;
+      [R,G,B]=wallColor(style,ambient);
+    } else {
+      // Floor
+      if(doRooms && roomId && roomId[i]>=0){
+        const rc=roomColor(roomId[i]);
+        const ambient=doAmbient ? Math.min(1, dist[i]/ambScale*2+0.4) : 1;
+        R=Math.round(rc[0]*ambient); G=Math.round(rc[1]*ambient); B=Math.round(rc[2]*ambient);
+      } else {
+        const ambient=doAmbient ? Math.min(1, dist[i]/ambScale*2+0.4) : 1;
+        [R,G,B]=floorColor(style,ambient);
+      }
+    }
+    const pi=i*4;data[pi]=R;data[pi+1]=G;data[pi+2]=B;data[pi+3]=255;
+  }
+  ctx.putImageData(imageData,0,0);
+
+  // Stats
+  let open=0;
+  for(let i=0;i<W*H;i++) if(!grid[i]) open++;
+  document.getElementById('stat').textContent=`${Math.round(open/(W*H)*100)}% open`;
+}
+
+function finalize() {
+  dist   = bfsDistance(grid);
+  if (document.getElementById('rooms').checked) roomId=labelRooms(grid);
+  else roomId=null;
+  render();
+}
+
+function generate() {
+  const seed  = document.getElementById('seed').value||'cave';
+  const fill  = parseInt(document.getElementById('fill').value);
+  const birth = parseInt(document.getElementById('birth').value);
+  const surv  = parseInt(document.getElementById('survive').value);
+  const iters = parseInt(document.getElementById('iters').value);
+  const rng=mkRng(seed);
+  grid=initGrid(rng,fill);
+  for(let i=0;i<iters;i++) grid=stepCA(grid,birth,surv);
+  finalize();
+}
+
+function resize(){
+  W=wrap.clientWidth;H=wrap.clientHeight;
+  canvas.width=W;canvas.height=H;
+  imageData=ctx.createImageData(W,H);
+  grid=null;
+  generate();
+}
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+document.getElementById('btn-gen').addEventListener('click',generate);
+document.getElementById('btn-rnd').addEventListener('click',()=>{
+  document.getElementById('seed').value=Math.random().toString(36).slice(2,9); generate();
+});
+document.getElementById('btn-step').addEventListener('click',()=>{
+  if(!grid) generate();
+  const b=parseInt(document.getElementById('birth').value);
+  const s=parseInt(document.getElementById('survive').value);
+  grid=stepCA(grid,b,s);
+  finalize();
+});
+document.getElementById('btn-save').addEventListener('click',()=>{
+  const a=document.createElement('a');
+  a.download=`cave-${document.getElementById('seed').value}.png`;
+  a.href=canvas.toDataURL();a.click();
+});
+document.getElementById('seed').addEventListener('keydown',e=>{if(e.key==='Enter')generate();});
+['fill','birth','survive','iters'].forEach(id=>{
+  document.getElementById(id).addEventListener('input',e=>{
+    document.getElementById('lbl-'+id).textContent=e.target.value; generate();
+  });
+});
+document.getElementById('style').addEventListener('change',()=>render());
+document.getElementById('ambient').addEventListener('change',()=>{
+  if(document.getElementById('ambient').checked && grid) dist=bfsDistance(grid);
+  render();
+});
+document.getElementById('rooms').addEventListener('change',()=>{
+  if(grid) roomId=document.getElementById('rooms').checked?labelRooms(grid):null;
+  render();
+});
+
+// Click to carve open space
+canvas.addEventListener('click',e=>{
+  if(!grid)return;
+  const r=canvas.getBoundingClientRect();
+  const x=Math.floor(e.clientX-r.left), y=Math.floor(e.clientY-r.top);
+  const rad=12;
+  for(let dy=-rad;dy<=rad;dy++) for(let dx=-rad;dx<=rad;dx++){
+    if(dx*dx+dy*dy>rad*rad) continue;
+    const nx=x+dx,ny=y+dy;
+    if(nx>0&&nx<W-1&&ny>0&&ny<H-1) grid[ny*W+nx]=0;
+  }
+  finalize();
+});
+
+window.addEventListener('resize',resize);
+resize();
+</script>
+</body>
+</html>

@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fractal Terrain Generator</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --accent: #b388ff; --text: #e2e2f0; --muted: #6b6b8a; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    header { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 1rem; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+    .back { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+    .back:hover { color: var(--text); }
+    h1 { font-size: 1.05rem; font-weight: 700; }
+    .controls { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; flex: 1; }
+    button { background: var(--border); border: 1px solid #2a2a3e; color: var(--text); padding: 0.3rem 0.75rem; border-radius: 6px; cursor: pointer; font-size: 0.82rem; }
+    button:hover { background: var(--accent); border-color: var(--accent); color: #000; }
+    input[type=text] { background: #0d0d18; border: 1px solid #2a2a3e; color: var(--text); padding: 0.3rem 0.6rem; border-radius: 6px; font-size: 0.82rem; width: 120px; }
+    input[type=text]:focus { outline: 1px solid var(--accent); }
+    label { font-size: 0.78rem; color: var(--muted); display: flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
+    input[type=range] { width: 65px; accent-color: var(--accent); }
+    select { background: var(--border); border: 1px solid #2a2a3e; color: var(--text); padding: 0.3rem 0.5rem; border-radius: 6px; font-size: 0.78rem; }
+    .canvas-wrap { flex: 1; overflow: hidden; background: #050508; display: flex; }
+    canvas { flex: 1; display: block; image-rendering: auto; }
+    footer { padding: 0.35rem 1rem; background: var(--surface); border-top: 1px solid var(--border); font-size: 0.73rem; color: var(--muted); flex-shrink: 0; }
+  </style>
+</head>
+<body>
+<header>
+  <a class="back" href="../index.html">← Back</a>
+  <h1>Fractal Terrain</h1>
+  <div class="controls">
+    <input type="text" id="seed" value="mountains" placeholder="Seed…">
+    <button id="btn-gen">Generate</button>
+    <button id="btn-rnd">⟳ Random</button>
+    <label>Roughness <input type="range" id="roughness" min="0.3" max="0.95" step="0.01" value="0.62"><span id="lbl-rough">0.62</span></label>
+    <label>Resolution <input type="range" id="res" min="6" max="10" step="1" value="9"><span id="lbl-res">512</span></label>
+    <label>Sea <input type="range" id="sealevel" min="0.1" max="0.65" step="0.01" value="0.32"><span id="lbl-sealevel">0.32</span></label>
+    <select id="style">
+      <option value="biome">Biome</option>
+      <option value="atlas">Atlas</option>
+      <option value="topo">Topographic</option>
+      <option value="height">Heightmap</option>
+    </select>
+    <label>Shade <input type="checkbox" id="hillshade" checked></label>
+    <label>Erode <input type="checkbox" id="erode"></label>
+    <button id="btn-save">↓ Save</button>
+  </div>
+</header>
+<div class="canvas-wrap" id="wrap">
+  <canvas id="canvas"></canvas>
+</div>
+<footer>Diamond-square midpoint displacement · seeded RNG · biome + hillshade rendering · erosion smoothing pass</footer>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('wrap');
+let W, H, imageData;
+let fracGrid = null, fracSize = 0;
+
+// ── PRNG ─────────────────────────────────────────────────────────────────────
+function hashStr(s) {
+  let h=2166136261>>>0;
+  for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
+  return h||1;
+}
+function mkRng(seed) {
+  let s=hashStr(String(seed));
+  return ()=>{s^=s<<13;s^=s>>>17;s^=s<<5;return(s>>>0)/0x100000000;};
+}
+
+// ── Diamond-Square ────────────────────────────────────────────────────────────
+function diamondSquare(n, persistence, rng) {
+  const size = (1<<n)+1;  // e.g. n=9 → 513
+  const g = new Float32Array(size*size);
+  const get=(x,y)=>g[y*size+x];
+  const set=(x,y,v)=>{g[y*size+x]=v;};
+
+  // Seed corners
+  set(0,    0,    rng()*2-1);
+  set(n,    0,    rng()*2-1);  // using n as grid index = size-1
+  set(0,    n,    rng()*2-1);
+  set(n,    n,    rng()*2-1);
+
+  let step=n, scale=1.0;
+  while(step>1){
+    const half=step>>1;
+
+    // Diamond step: midpoint of each square gets average of corners + random offset
+    for(let y=0;y<n;y+=step) for(let x=0;x<n;x+=step){
+      const avg=(get(x,y)+get(x+step,y)+get(x,y+step)+get(x+step,y+step))/4;
+      set(x+half, y+half, avg+(rng()*2-1)*scale);
+    }
+
+    // Square step: midpoint of each diamond edge
+    for(let y=0;y<=n;y+=half) for(let x=(y+half)%step;x<=n;x+=step){
+      let sum=0, cnt=0;
+      if(x-half>=0){sum+=get(x-half,y);cnt++;}
+      if(x+half<=n){sum+=get(x+half,y);cnt++;}
+      if(y-half>=0){sum+=get(x,y-half);cnt++;}
+      if(y+half<=n){sum+=get(x,y+half);cnt++;}
+      set(x,y, sum/cnt+(rng()*2-1)*scale);
+    }
+
+    step=half;
+    scale*=persistence; // persistence < 1 → scale shrinks → smoother at fine scales
+  }
+
+  // Normalize to [0,1]
+  let mn=Infinity, mx=-Infinity;
+  for(const v of g){mn=Math.min(mn,v);mx=Math.max(mx,v);}
+  const range=mx-mn||1;
+  for(let i=0;i<g.length;i++) g[i]=(g[i]-mn)/range;
+  return {g, size};
+}
+
+// Simple thermal erosion pass: slopes above threshold move material downhill
+function erode(g, size, passes=3) {
+  const e = new Float32Array(g);
+  const threshold=0.02;
+  for(let p=0;p<passes;p++){
+    for(let y=1;y<size-1;y++) for(let x=1;x<size-1;x++){
+      const i=y*size+x, h=e[i];
+      let minH=h, minI=-1;
+      for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+        if(!dy&&!dx) continue;
+        const j=(y+dy)*size+(x+dx);
+        if(e[j]<minH){minH=e[j];minI=j;}
+      }
+      if(minI>=0){
+        const diff=h-minH;
+        if(diff>threshold){const move=diff*0.1; e[i]-=move; e[minI]+=move;}
+      }
+    }
+  }
+  return e;
+}
+
+// ── Colours ───────────────────────────────────────────────────────────────────
+function biomeColor(h, sl) {
+  if(h<sl){const t=h/sl;return[Math.round(8+t*22),Math.round(22+t*58),Math.round(78+t*82)];}
+  const t=(h-sl)/(1-sl);
+  if(t<0.04) return[212,188,102];
+  if(t<0.22) return[88,162,50];
+  if(t<0.44) return[58,118,34];
+  if(t<0.62) return[78,98,54];
+  if(t<0.78) return[98,90,80];
+  if(t<0.92) return[152,145,138];
+  return[228,226,234];
+}
+function atlasColor(h, sl) {
+  if(h<sl){const t=h/sl;return[Math.round(70+t*35),Math.round(110+t*55),Math.round(170+t*50)];}
+  const t=(h-sl)/(1-sl);
+  if(t<0.04) return[225,205,135];
+  if(t<0.28) return[185,215,145];
+  if(t<0.52) return[145,185,115];
+  if(t<0.70) return[175,168,145];
+  if(t<0.87) return[195,188,175];
+  return[232,230,237];
+}
+function topoColor(h, sl) {
+  const bands=30, t=h*bands;
+  if((t%1)<0.07) return[15,15,15];
+  if(h<sl){const d=h/sl;return[Math.round(20+d*30),Math.round(50+d*60),Math.round(90+d*80)];}
+  const v=Math.round(h*200);
+  return[Math.round(v*0.55+40),Math.round(v*0.85+20),Math.round(v*0.38)];
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render() {
+  if (!fracGrid) return;
+  const sl=parseFloat(document.getElementById('sealevel').value);
+  const style=document.getElementById('style').value;
+  const doShade=document.getElementById('hillshade').checked;
+  const {g, size}=fracGrid;
+  const data=imageData.data;
+  const SC=5, LX=-0.6, LY=-0.5, LZ=1.0, LN=Math.sqrt(0.36+0.25+1);
+
+  for(let py=0;py<H;py++) for(let px=0;px<W;px++){
+    // Bilinear sample from fractal grid
+    const gx=(px/W)*(size-1), gy=(py/H)*(size-1);
+    const xi=Math.min(Math.floor(gx),size-2), yi=Math.min(Math.floor(gy),size-2);
+    const xf=gx-xi, yf=gy-yi;
+    const h00=g[yi*size+xi],     h10=g[yi*size+xi+1];
+    const h01=g[(yi+1)*size+xi], h11=g[(yi+1)*size+xi+1];
+    const h=h00*(1-xf)*(1-yf)+h10*xf*(1-yf)+h01*(1-xf)*yf+h11*xf*yf;
+
+    let R,G,B;
+    if(style==='height'){const v=Math.round(h*255);R=G=B=v;}
+    else if(style==='atlas')[R,G,B]=atlasColor(h,sl);
+    else if(style==='topo')[R,G,B]=topoColor(h,sl);
+    else [R,G,B]=biomeColor(h,sl);
+
+    if(doShade && h>sl){
+      // Sample neighbors in fractal grid for gradient
+      const gxR=Math.min(xi+1,size-2), gyD=Math.min(yi+1,size-2);
+      const hR=g[yi*size+gxR+1], hD=g[(gyD+1)*size+xi];
+      const gxx=(hR-h)*SC*(size/W);
+      const gyy=(hD-h)*SC*(size/H);
+      const nm=Math.sqrt(gxx*gxx+gyy*gyy+1);
+      const shade=Math.max(0.2,(-gxx*LX/LN+-gyy*LY/LN+LZ/LN)/nm);
+      R=Math.min(255,Math.round(R*shade));
+      G=Math.min(255,Math.round(G*shade));
+      B=Math.min(255,Math.round(B*shade));
+    }
+
+    const pi=(py*W+px)*4;
+    data[pi]=R;data[pi+1]=G;data[pi+2]=B;data[pi+3]=255;
+  }
+  ctx.putImageData(imageData,0,0);
+}
+
+function generate() {
+  const seed=document.getElementById('seed').value||'mountains';
+  const n=parseInt(document.getElementById('res').value);
+  const persist=parseFloat(document.getElementById('roughness').value);
+  const doErode=document.getElementById('erode').checked;
+  const rng=mkRng(seed);
+  let {g,size}=diamondSquare(n,persist,rng);
+  if(doErode) g=erode(g,size,4);
+  fracGrid={g,size};
+  render();
+}
+
+function resize(){
+  W=wrap.clientWidth;H=wrap.clientHeight;
+  canvas.width=W;canvas.height=H;
+  imageData=ctx.createImageData(W,H);
+  generate();
+}
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+document.getElementById('btn-gen').addEventListener('click',generate);
+document.getElementById('btn-rnd').addEventListener('click',()=>{
+  document.getElementById('seed').value=Math.random().toString(36).slice(2,9); generate();
+});
+document.getElementById('btn-save').addEventListener('click',()=>{
+  const a=document.createElement('a');
+  a.download=`fractal-${document.getElementById('seed').value}.png`;
+  a.href=canvas.toDataURL();a.click();
+});
+document.getElementById('seed').addEventListener('keydown',e=>{if(e.key==='Enter')generate();});
+document.getElementById('roughness').addEventListener('input',e=>{document.getElementById('lbl-rough').textContent=e.target.value;generate();});
+document.getElementById('res').addEventListener('input',e=>{
+  document.getElementById('lbl-res').textContent=(1<<parseInt(e.target.value))+'';
+  generate();
+});
+document.getElementById('erode').addEventListener('change',generate);
+// Re-render only (no rebuild needed):
+document.getElementById('sealevel').addEventListener('input',e=>{document.getElementById('lbl-sealevel').textContent=e.target.value;render();});
+document.getElementById('style').addEventListener('change',()=>render());
+document.getElementById('hillshade').addEventListener('change',()=>render());
+window.addEventListener('resize',resize);
+resize();
+</script>
+</body>
+</html>
