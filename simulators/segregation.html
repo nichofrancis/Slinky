@@ -257,6 +257,39 @@ window.addEventListener('resize', () => { setupCanvas(); draw(); });
 setupCanvas();
 init();
 loop();
+
+// ── Sound ─────────────────────────────────────────────────────────────────────
+const snd = (() => {
+  let _ctx;
+  const ac = () => _ctx || (_ctx = new (window.AudioContext||window.webkitAudioContext)());
+  function tone(f0, f1, dur, vol=0.12, type='square') {
+    const c=ac(), o=c.createOscillator(), g=c.createGain();
+    o.connect(g); g.connect(c.destination); o.type=type;
+    o.frequency.setValueAtTime(f0, c.currentTime);
+    if(f1!==f0) o.frequency.exponentialRampToValueAtTime(Math.max(f1,1), c.currentTime+dur);
+    g.gain.setValueAtTime(vol, c.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime+dur);
+    o.start(); o.stop(c.currentTime+dur+0.01);
+  }
+  function noise(dur, cf=1500, vol=0.1) {
+    const c=ac(), n=Math.floor(c.sampleRate*dur), buf=c.createBuffer(1,n,c.sampleRate);
+    const d=buf.getChannelData(0); for(let i=0;i<n;i++) d[i]=Math.random()*2-1;
+    const src=c.createBufferSource(), filt=c.createBiquadFilter(), g=c.createGain();
+    src.buffer=buf; filt.type='bandpass'; filt.frequency.value=cf; filt.Q.value=0.8;
+    src.connect(filt); filt.connect(g); g.connect(c.destination);
+    g.gain.setValueAtTime(vol, c.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime+dur);
+    src.start(); src.stop(c.currentTime+dur+0.01);
+  }
+  return {
+    whoosh: () => noise(0.18, 600, 0.13),
+    tick:   () => tone(900, 400, 0.025, 0.07),
+    toggle: (on) => tone(on?520:640, on?720:380, 0.09, 0.10, 'sine'),
+  };
+})();
+document.getElementById('btn-reset').addEventListener('mousedown', () => snd.whoosh());
+document.getElementById('btn-play').addEventListener('mousedown', () => snd.toggle(!running));
+canvas.addEventListener('click', () => snd.tick());
 </script>
 </body>
 </html>

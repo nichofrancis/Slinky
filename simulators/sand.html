@@ -269,6 +269,41 @@ document.getElementById('speed').addEventListener('input', e => {
 window.addEventListener('resize', resize);
 resize();
 requestAnimationFrame(loop);
+
+// ── Sound ─────────────────────────────────────────────────────────────────────
+const snd = (() => {
+  let _ctx;
+  const ac = () => _ctx || (_ctx = new (window.AudioContext||window.webkitAudioContext)());
+  function tone(f0, f1, dur, vol=0.12, type='square') {
+    const c=ac(), o=c.createOscillator(), g=c.createGain();
+    o.connect(g); g.connect(c.destination); o.type=type;
+    o.frequency.setValueAtTime(f0, c.currentTime);
+    if(f1!==f0) o.frequency.exponentialRampToValueAtTime(Math.max(f1,1), c.currentTime+dur);
+    g.gain.setValueAtTime(vol, c.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime+dur);
+    o.start(); o.stop(c.currentTime+dur+0.01);
+  }
+  function noise(dur, cf=1500, vol=0.1) {
+    const c=ac(), n=Math.floor(c.sampleRate*dur), buf=c.createBuffer(1,n,c.sampleRate);
+    const d=buf.getChannelData(0); for(let i=0;i<n;i++) d[i]=Math.random()*2-1;
+    const src=c.createBufferSource(), filt=c.createBiquadFilter(), g=c.createGain();
+    src.buffer=buf; filt.type='bandpass'; filt.frequency.value=cf; filt.Q.value=0.8;
+    src.connect(filt); filt.connect(g); g.connect(c.destination);
+    g.gain.setValueAtTime(vol, c.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime+dur);
+    src.start(); src.stop(c.currentTime+dur+0.01);
+  }
+  return {
+    mat:  (f) => tone(f, f*0.55, 0.04, 0.09),
+    thud: () => tone(180, 60, 0.14, 0.18, 'sine'),
+  };
+})();
+// Each material gets its own pitch: sand=sandy mid, water=low-watery, stone=hard, fire=high, oil=warm, steam=airy, wood=woody, erase=low
+const MAT_FREQS = [250, 850, 420, 650, 1150, 540, 750, 600];
+document.querySelectorAll('[data-mat]').forEach(btn => {
+  btn.addEventListener('mousedown', () => snd.mat(MAT_FREQS[+btn.dataset.mat] || 600));
+});
+document.getElementById('btn-clear').addEventListener('mousedown', () => snd.thud());
 </script>
 </body>
 </html>

@@ -764,6 +764,23 @@
       loop();
     })();
 
+    // ── Sound ─────────────────────────────────────────────────────────────────
+    const snd = (() => {
+      let _ctx;
+      const ac = () => _ctx || (_ctx = new (window.AudioContext||window.webkitAudioContext)());
+      function tone(f0, f1, dur, vol=0.12, type='square') {
+        const c=ac(), o=c.createOscillator(), g=c.createGain();
+        o.connect(g); g.connect(c.destination); o.type=type;
+        o.frequency.setValueAtTime(f0, c.currentTime);
+        if(f1!==f0) o.frequency.exponentialRampToValueAtTime(Math.max(f1,1), c.currentTime+dur);
+        g.gain.setValueAtTime(vol, c.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime+dur);
+        o.start(); o.stop(c.currentTime+dur+0.01);
+      }
+      return { click: (f=1100) => tone(f, f*0.55, 0.04, 0.09) };
+    })();
+    document.querySelectorAll('.card').forEach(c => c.addEventListener('mousedown', () => snd.click()));
+
     // ── Schelling Segregation preview ─────────────────────────────────────────
     (function() {
       const canvas = document.getElementById('prev-seg');
