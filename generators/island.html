@@ -20,8 +20,9 @@
     label { font-size: 0.78rem; color: var(--muted); display: flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
     input[type=range] { width: 65px; accent-color: var(--accent); }
     select { background: var(--border); border: 1px solid #2a2a3e; color: var(--text); padding: 0.3rem 0.5rem; border-radius: 6px; font-size: 0.78rem; }
-    .canvas-wrap { flex: 1; overflow: hidden; background: #050508; display: flex; }
+    .canvas-wrap { flex: 1; overflow: hidden; background: #050508; display: flex; position: relative; }
     canvas { flex: 1; display: block; }
+    .player-hint { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.62); color: rgba(255,255,255,0.78); font-size: 0.78rem; padding: 0.35rem 0.9rem; border-radius: 5px; pointer-events: none; border: 1px solid rgba(255,255,255,0.1); white-space: nowrap; }
     footer { padding: 0.35rem 1rem; background: var(--surface); border-top: 1px solid var(--border); font-size: 0.73rem; color: var(--muted); flex-shrink: 0; }
   </style>
 </head>
@@ -54,8 +55,9 @@
 </header>
 <div class="canvas-wrap" id="wrap">
   <canvas id="canvas"></canvas>
+  <div class="player-hint" id="hint">⛵ Click on water to place your ship · WASD / ↑↓←→ to sail</div>
 </div>
-<footer>Seeded Perlin fBm · island / archipelago / atoll shapes · Enter to regenerate · sea level and style re-render instantly</footer>
+<footer>Seeded Perlin fBm · island / archipelago / atoll shapes · Enter to regenerate · ⛵ click water to spawn ship · WASD to sail</footer>
 
 <script>
 const canvas = document.getElementById('canvas');
@@ -130,6 +132,8 @@ function biomeColor(h, sl, style) {
 
 // ── Heightmap ─────────────────────────────────────────────────────────────────
 let cachedHeights = null, cachedKey = null;
+let player = null, playerRaf = null, cachedTerrain = null;
+const keys = {};
 
 function hmKey() {
   return [document.getElementById('seed').value, document.getElementById('scale').value,
@@ -194,6 +198,11 @@ function render() {
     }
   }
   ctx.putImageData(imageData,0,0);
+  cachedTerrain = ctx.getImageData(0,0,W,H);
+  if (player && !isWater(player.x, player.y)) {
+    player = null;
+    document.getElementById('hint').style.display = '';
+  }
 }
 
 function generate(forceRebuild=true) {
@@ -209,8 +218,70 @@ function resize() {
   W=wrap.clientWidth; H=wrap.clientHeight;
   canvas.width=W; canvas.height=H;
   imageData=ctx.createImageData(W,H);
-  cachedHeights=null;
+  cachedHeights=null; cachedTerrain=null; player=null;
+  document.getElementById('hint').style.display = '';
   generate();
+}
+
+// ── Player ────────────────────────────────────────────────────────────────────
+function isWater(x, y) {
+  if (!heights) return false;
+  const xi = Math.max(0, Math.min(W-1, Math.round(x)));
+  const yi = Math.max(0, Math.min(H-1, Math.round(y)));
+  const sl = parseFloat(document.getElementById('sealevel').value);
+  return heights[yi*W+xi] < sl;
+}
+
+function drawShip(x, y, angle) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  // Wake
+  ctx.beginPath();
+  ctx.moveTo(-14, 0); ctx.lineTo(-22, -5); ctx.moveTo(-14, 0); ctx.lineTo(-22, 5);
+  ctx.strokeStyle = 'rgba(180,220,255,0.5)'; ctx.lineWidth = 1.5; ctx.stroke();
+  // Hull
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 10, 5, 0, 0, Math.PI*2);
+  ctx.fillStyle = '#8B5E3C'; ctx.fill();
+  ctx.strokeStyle = '#5a3a1a'; ctx.lineWidth = 1; ctx.stroke();
+  // Mast
+  ctx.beginPath(); ctx.moveTo(2,0); ctx.lineTo(2,-14);
+  ctx.strokeStyle = '#5a3a1a'; ctx.lineWidth = 1.5; ctx.stroke();
+  // Sail
+  ctx.beginPath(); ctx.moveTo(2,-12); ctx.lineTo(2,-2); ctx.lineTo(9,-7); ctx.closePath();
+  ctx.fillStyle = 'rgba(240,230,200,0.9)'; ctx.fill();
+  ctx.restore();
+}
+
+function playerFrame() {
+  playerRaf = requestAnimationFrame(playerFrame);
+  if (!player || !cachedTerrain) return;
+
+  const speed = 1.8;
+  let dx = 0, dy = 0;
+  if (keys['ArrowLeft']  || keys['a'] || keys['A']) dx -= speed;
+  if (keys['ArrowRight'] || keys['d'] || keys['D']) dx += speed;
+  if (keys['ArrowUp']    || keys['w'] || keys['W']) dy -= speed;
+  if (keys['ArrowDown']  || keys['s'] || keys['S']) dy += speed;
+
+  if (dx !== 0 || dy !== 0) {
+    player.angle = Math.atan2(dy, dx);
+    const nx = player.x + dx;
+    const ny = player.y + dy;
+    if (isWater(nx, ny)) {
+      player.x = nx; player.y = ny;
+    } else if (isWater(nx, player.y)) {
+      player.x = nx;
+    } else if (isWater(player.x, ny)) {
+      player.y = ny;
+    }
+    player.x = Math.max(0, Math.min(W-1, player.x));
+    player.y = Math.max(0, Math.min(H-1, player.y));
+  }
+
+  ctx.putImageData(cachedTerrain, 0, 0);
+  drawShip(player.x, player.y, player.angle);
 }
 
 // ── Controls ──────────────────────────────────────────────────────────────────
@@ -229,8 +300,23 @@ document.getElementById('octaves').addEventListener('input', e=>{document.getEle
 document.getElementById('sealevel').addEventListener('input', e=>{document.getElementById('lbl-sealevel').textContent=e.target.value; generate(false);});
 document.getElementById('style').addEventListener('change', ()=>generate(false));
 document.getElementById('hillshade').addEventListener('change', ()=>generate(false));
+
+// Player controls
+window.addEventListener('keydown', e => { keys[e.key] = true; e.preventDefault && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key) && e.preventDefault(); });
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+canvas.addEventListener('click', e => {
+  const r = canvas.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  if (!isWater(x, y)) return;
+  player = { x, y, angle: 0 };
+  document.getElementById('hint').style.display = 'none';
+  if (!playerRaf) playerFrame();
+});
+
 window.addEventListener('resize', resize);
 resize();
+playerFrame();
 </script>
 </body>
 </html>

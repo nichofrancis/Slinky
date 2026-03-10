@@ -20,8 +20,9 @@
     label { font-size: 0.78rem; color: var(--muted); display: flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
     input[type=range] { width: 65px; accent-color: var(--accent); }
     select { background: var(--border); border: 1px solid #2a2a3e; color: var(--text); padding: 0.3rem 0.5rem; border-radius: 6px; font-size: 0.78rem; }
-    .canvas-wrap { flex: 1; overflow: hidden; background: #050508; display: flex; }
+    .canvas-wrap { flex: 1; overflow: hidden; background: #050508; display: flex; position: relative; }
     canvas { flex: 1; display: block; }
+    .player-hint { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.62); color: rgba(255,255,255,0.78); font-size: 0.78rem; padding: 0.35rem 0.9rem; border-radius: 5px; pointer-events: none; border: 1px solid rgba(255,255,255,0.1); white-space: nowrap; }
     footer { padding: 0.35rem 1rem; background: var(--surface); border-top: 1px solid var(--border); font-size: 0.73rem; color: var(--muted); flex-shrink: 0; }
   </style>
 </head>
@@ -49,8 +50,9 @@
 </header>
 <div class="canvas-wrap" id="wrap">
   <canvas id="canvas"></canvas>
+  <div class="player-hint" id="hint">🧍 Click on land to place your explorer · WASD / ↑↓←→ to move · cannot cross rivers</div>
 </div>
-<footer>D8 flow routing · bucket-sort flow accumulation · rivers drawn by drainage area · watershed colouring</footer>
+<footer>D8 flow routing · bucket-sort flow accumulation · rivers drawn by drainage area · 🧍 click land to spawn explorer · WASD to move</footer>
 
 <script>
 const canvas = document.getElementById('canvas');
@@ -60,6 +62,9 @@ let W, H, imageData;
 
 // Shared state between build and render
 let heights = null, flowAcc = null, watershed = null;
+let maxFlowCached = 1;
+let player = null, cachedTerrain = null, playerRaf = null;
+const keys = {};
 
 // ── Seeded noise ──────────────────────────────────────────────────────────────
 function hashStr(s) {
@@ -216,6 +221,7 @@ function render() {
   // Find max land flow for threshold
   let maxFlow=0;
   for(let i=0;i<N;i++) if(heights[i]>=sl) maxFlow=Math.max(maxFlow,flowAcc[i]);
+  maxFlowCached = maxFlow || 1;
   const riverMin=maxFlow*rt;
   const logMax=Math.log(maxFlow+1);
 
@@ -258,6 +264,11 @@ function render() {
     const pi=i*4; data[pi]=R;data[pi+1]=G;data[pi+2]=B;data[pi+3]=255;
   }
   ctx.putImageData(imageData,0,0);
+  cachedTerrain = ctx.getImageData(0,0,W,H);
+  if (player && !isLand(player.x, player.y)) {
+    player = null;
+    document.getElementById('hint').style.display = '';
+  }
 }
 
 function generate(forceRebuild=true) {
@@ -274,8 +285,69 @@ function resize(){
   W=wrap.clientWidth;H=wrap.clientHeight;
   canvas.width=W;canvas.height=H;
   imageData=ctx.createImageData(W,H);
-  heights=null; cachedKey=null;
+  heights=null; cachedKey=null; cachedTerrain=null; player=null;
+  document.getElementById('hint').style.display = '';
   generate();
+}
+
+// ── Player ────────────────────────────────────────────────────────────────────
+function isLand(x, y) {
+  if (!heights || !flowAcc) return false;
+  const xi = Math.max(0, Math.min(W-1, Math.round(x)));
+  const yi = Math.max(0, Math.min(H-1, Math.round(y)));
+  const sl = parseFloat(document.getElementById('sealevel').value);
+  const rt = parseFloat(document.getElementById('riverthresh').value);
+  const i = yi*W+xi;
+  return heights[i] >= sl && flowAcc[i] <= maxFlowCached * rt;
+}
+
+function drawHiker(x, y) {
+  ctx.save();
+  ctx.translate(x, y);
+  // Shadow
+  ctx.beginPath(); ctx.ellipse(0, 8, 6, 2, 0, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill();
+  // Body
+  ctx.beginPath(); ctx.ellipse(0, 2, 4, 5, 0, 0, Math.PI*2);
+  ctx.fillStyle = '#e53935'; ctx.fill();
+  // Head
+  ctx.beginPath(); ctx.arc(0, -6, 4, 0, Math.PI*2);
+  ctx.fillStyle = '#ffd54f'; ctx.fill();
+  ctx.strokeStyle = '#5d4037'; ctx.lineWidth = 1; ctx.stroke();
+  // Hat
+  ctx.beginPath(); ctx.ellipse(0, -9, 5, 1.5, 0, 0, Math.PI*2);
+  ctx.fillStyle = '#5d4037'; ctx.fill();
+  ctx.beginPath(); ctx.rect(-3, -14, 6, 5);
+  ctx.fillStyle = '#5d4037'; ctx.fill();
+  ctx.restore();
+}
+
+function playerFrame() {
+  playerRaf = requestAnimationFrame(playerFrame);
+  if (!player || !cachedTerrain) return;
+
+  const speed = 2;
+  let dx = 0, dy = 0;
+  if (keys['ArrowLeft']  || keys['a'] || keys['A']) dx -= speed;
+  if (keys['ArrowRight'] || keys['d'] || keys['D']) dx += speed;
+  if (keys['ArrowUp']    || keys['w'] || keys['W']) dy -= speed;
+  if (keys['ArrowDown']  || keys['s'] || keys['S']) dy += speed;
+
+  if (dx !== 0 || dy !== 0) {
+    const nx = player.x + dx, ny = player.y + dy;
+    if (isLand(nx, ny)) {
+      player.x = nx; player.y = ny;
+    } else if (isLand(nx, player.y)) {
+      player.x = nx;
+    } else if (isLand(player.x, ny)) {
+      player.y = ny;
+    }
+    player.x = Math.max(0, Math.min(W-1, player.x));
+    player.y = Math.max(0, Math.min(H-1, player.y));
+  }
+
+  ctx.putImageData(cachedTerrain, 0, 0);
+  drawHiker(player.x, player.y);
 }
 
 // ── Controls ──────────────────────────────────────────────────────────────────
@@ -297,8 +369,23 @@ document.getElementById('riverthresh').addEventListener('input',e=>{document.get
 document.getElementById('rivercolor').addEventListener('input',e=>{document.getElementById('lbl-rc').textContent=e.target.value;render();});
 document.getElementById('style').addEventListener('change',()=>render());
 document.getElementById('hillshade').addEventListener('change',()=>render());
+
+// Player controls
+window.addEventListener('keydown', e => { keys[e.key] = true; ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key) && e.preventDefault(); });
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+canvas.addEventListener('click', e => {
+  const r = canvas.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  if (!isLand(x, y)) return;
+  player = { x, y };
+  document.getElementById('hint').style.display = 'none';
+  if (!playerRaf) playerFrame();
+});
+
 window.addEventListener('resize',resize);
 resize();
+playerFrame();
 </script>
 </body>
 </html>
